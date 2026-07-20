@@ -22,14 +22,14 @@ for fast source-aware recall.
 The intended release path is:
 
 ```bash
-brew install OWNER/tap/wikibrain
+brew install hungrytech/tap/wikibrain
 brainctl init --workspace /path/to/project
 brainctl doctor
 ```
 
-`OWNER` is intentionally unresolved until the public GitHub repository and tap
-are selected. The release-ready Formula generator is under
-`packaging/homebrew/`.
+The source repository and `v0.1.0` tag are public. The command above becomes
+available after `hungrytech/homebrew-tap` is published; the release-ready
+Formula generator is under `packaging/homebrew/`.
 
 For local development:
 

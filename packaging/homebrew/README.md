@@ -8,30 +8,30 @@ pinned backend.
 
 ## First public release
 
-1. Publish `OWNER/wikibrain` and tag `v0.1.0`.
+1. Publish `hungrytech/wikibrain` and tag `v0.1.0`.
 2. Download the GitHub-generated source archive and calculate its SHA-256.
 3. Render the Formula:
 
    ```bash
    python3 scripts/render_homebrew_formula.py \
-     --owner OWNER \
+     --owner hungrytech \
      --version 0.1.0 \
-     --source-url https://github.com/OWNER/wikibrain/archive/refs/tags/v0.1.0.tar.gz \
+     --source-url https://github.com/hungrytech/wikibrain/archive/refs/tags/v0.1.0.tar.gz \
      --source-sha256 64_HEX_CHARACTERS
    ```
 
-4. Create `OWNER/homebrew-tap` with:
+4. Create `hungrytech/homebrew-tap` with:
 
    ```bash
-   brew tap-new OWNER/tap --github-packages
+   brew tap-new hungrytech/tap --github-packages
    ```
 
 5. Copy `Formula/wikibrain.rb` into that tap and run:
 
    ```bash
-   brew audit --strict OWNER/tap/wikibrain
-   brew install --build-from-source OWNER/tap/wikibrain
-   brew test OWNER/tap/wikibrain
+   brew audit --strict hungrytech/tap/wikibrain
+   brew install --build-from-source hungrytech/tap/wikibrain
+   brew test hungrytech/tap/wikibrain
    ```
 
 6. Let the tap's BrewTestBot workflow publish bottles. Do not hand-author the
@@ -40,7 +40,7 @@ pinned backend.
 The user-facing flow becomes:
 
 ```bash
-brew install OWNER/tap/wikibrain
+brew install hungrytech/tap/wikibrain
 brainctl init --workspace /path/to/project
 brainctl doctor
 ```
@@ -53,7 +53,7 @@ allowlisted workspace.
 
 ```bash
 brew update
-brew upgrade OWNER/tap/wikibrain
+brew upgrade hungrytech/tap/wikibrain
 brainctl setup
 brainctl doctor
 ```
@@ -68,7 +68,7 @@ Before uninstalling the executable:
 ```bash
 brainctl hooks uninstall
 brainctl skills uninstall
-brew uninstall OWNER/tap/wikibrain
+brew uninstall hungrytech/tap/wikibrain
 ```
 
 The private vault is intentionally preserved outside the Cellar.

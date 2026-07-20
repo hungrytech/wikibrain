@@ -1,7 +1,7 @@
 # WikiBrain
 
 <p align="center">
-  <img src="docs/assets/wikibrain-mascot.svg" width="920" alt="A friendly brain organizing local notes with two robot coding assistants">
+  <img src="docs/assets/wikibrain-hero.png" width="920" alt="WikiBrain: a young researcher and friendly brain mascot beneath a glowing connected knowledge map">
 </p>
 
 <p align="center"><strong>Open source · Local-first · User-owned · Markdown-native</strong></p>

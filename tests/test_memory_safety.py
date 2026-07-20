@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
@@ -858,7 +859,11 @@ class MemorySafetyTests(unittest.TestCase):
             self.assertEqual(code, 0)
             config = BrainConfig.load(home)
             self.assertEqual(config.workspace_roots, [str(user_home.resolve())])
-            self.assertIn(str(user_home.resolve()), output.getvalue())
+            payload = json.loads(output.getvalue())
+            self.assertEqual(
+                payload["workspace_roots"],
+                [str(user_home.resolve())],
+            )
 
     def test_config_create_defaults_workspace_to_user_home(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

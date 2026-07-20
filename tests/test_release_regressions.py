@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import threading
 import unittest
@@ -888,11 +889,17 @@ class ReleaseRegressionTests(unittest.TestCase):
                         "--json",
                     ]
                 )
-            payload = output.getvalue()
-            self.assertEqual(code, 0, payload)
-            self.assertIn(str(claude_settings), payload)
-            self.assertNotIn('"client": "codex"', payload)
-            self.assertNotIn('"codex_action"', payload)
+            raw_payload = output.getvalue()
+            payload = json.loads(raw_payload)
+            self.assertEqual(code, 0, raw_payload)
+            self.assertEqual(
+                {hook["client"] for hook in payload["hooks"]},
+                {"claude"},
+            )
+            self.assertTrue(
+                Path(payload["hooks"][0]["path"]).samefile(claude_settings),
+            )
+            self.assertNotIn("codex_action", raw_payload)
 
 
 if __name__ == "__main__":

@@ -8,16 +8,16 @@ pinned backend.
 
 ## Release workflow
 
-1. Publish `hungrytech/wikibrain` and tag the release, for example `v0.1.1`.
+1. Publish `hungrytech/wikibrain` and tag the release, for example `v0.1.3`.
 2. Download the GitHub-generated source archive and calculate its SHA-256.
 3. Render the Formula:
 
    ```bash
-   python3 scripts/render_homebrew_formula.py \
-     --owner hungrytech \
-     --version 0.1.1 \
-     --source-url https://github.com/hungrytech/wikibrain/archive/refs/tags/v0.1.1.tar.gz \
-     --source-sha256 64_HEX_CHARACTERS
+     python3 scripts/render_homebrew_formula.py \
+       --owner hungrytech \
+       --version 0.1.3 \
+       --source-url https://github.com/hungrytech/wikibrain/archive/refs/tags/v0.1.3.tar.gz \
+       --source-sha256 64_HEX_CHARACTERS
    ```
 
 4. Create `hungrytech/homebrew-tap` with:
@@ -62,7 +62,9 @@ brainctl doctor
 `brainctl setup` refreshes the managed hook commands and generated agent skills
 to the newly linked Homebrew version while preserving unrelated configuration.
 Codex users should review `/hooks` again after an upgrade if Codex asks them to
-trust the refreshed definitions.
+trust the refreshed definitions. Manual `brainctl remember` and
+`brainctl recall` remain usable before that review; automatic Codex lifecycle
+capture and recall do not.
 
 Before uninstalling the executable:
 

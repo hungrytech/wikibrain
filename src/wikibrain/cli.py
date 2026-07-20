@@ -84,6 +84,74 @@ def _skill_targets(args: argparse.Namespace, clients: list[str]) -> dict[str, Pa
     return targets
 
 
+def _client_readiness(
+    clients: list[str],
+    *,
+    applied: bool,
+    hooks_installed: bool,
+    skills_installed: bool,
+) -> dict[str, str]:
+    if not applied:
+        readiness = {"manual_commands": "not-installed-dry-run"}
+        if "claude" in clients:
+            readiness["claude_automatic_hooks"] = "preview-only"
+        if "codex" in clients:
+            readiness["codex_manual_skill"] = "preview-only"
+            readiness["codex_automatic_hooks"] = "preview-only"
+            readiness["codex_trust_owner"] = (
+                "Codex; brainctl does not grant, bypass, or inspect hook trust"
+            )
+        return readiness
+
+    readiness = {"manual_commands": "ready"}
+    if "claude" in clients:
+        readiness["claude_automatic_hooks"] = (
+            "ready-after-new-session" if hooks_installed else "not-installed"
+        )
+    if "codex" in clients:
+        readiness["codex_manual_skill"] = (
+            "installed-for-new-session" if skills_installed else "not-installed"
+        )
+        readiness["codex_automatic_hooks"] = (
+            "codex-review-required-unless-already-trusted"
+            if hooks_installed
+            else "not-installed"
+        )
+        readiness["codex_trust_owner"] = (
+            "Codex; brainctl does not grant, bypass, or inspect hook trust"
+        )
+    return readiness
+
+
+def _next_step(
+    clients: list[str],
+    *,
+    applied: bool,
+    hooks_installed: bool,
+) -> str:
+    if not applied:
+        return (
+            "Dry run complete; no files were changed. Run brainctl init "
+            "without --dry-run to apply this setup."
+        )
+    if not hooks_installed:
+        return (
+            "Manual mode is ready: use brainctl remember/recall. "
+            "Automatic lifecycle capture and recall are disabled because "
+            "hooks were not installed."
+        )
+    steps = ["Start a new agent session."]
+    if "claude" in clients:
+        steps.append("Claude user hooks are ready.")
+    if "codex" in clients:
+        steps.append(
+            "Codex manual commands are ready now and its installed skill loads "
+            "in the new session; for automatic hooks, open /hooks and "
+            "review/trust the current definitions."
+        )
+    return " ".join(steps)
+
+
 def command_init(args: argparse.Namespace, home: Path) -> int:
     if (home / "config.json").exists() and not args.force:
         config = BrainConfig.load(home)
@@ -154,9 +222,16 @@ def command_init(args: argparse.Namespace, home: Path) -> int:
             "wikimap_indexed": indexed,
             "hooks": hooks,
             "skills": skills,
-            "next": (
-                "Open /hooks in Codex and review/trust the WikiBrain hooks. "
-                "Claude loads its user hooks directly."
+            "client_readiness": _client_readiness(
+                args.clients,
+                applied=not args.dry_run,
+                hooks_installed=not args.no_hooks,
+                skills_installed=not args.no_skills,
+            ),
+            "next": _next_step(
+                args.clients,
+                applied=not args.dry_run,
+                hooks_installed=not args.no_hooks,
             ),
         },
         args.json,
@@ -418,8 +493,12 @@ def command_doctor(args: argparse.Namespace, home: Path) -> int:
                 for status in checks["hooks"]
             )
         ):
+            checks["codex_hook_trust"] = "codex-owned-not-inspected"
             checks["codex_action"] = (
-                "Review and trust installed definitions with /hooks."
+                "brainctl doctor verifies the installed definitions but Codex "
+                "owns their trust state; WikiBrain does not inspect or change "
+                "it. If the current definition hash has not been trusted, "
+                "open /hooks and review/trust it."
             )
     else:
         healthy = False

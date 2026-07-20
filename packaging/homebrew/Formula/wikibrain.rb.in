@@ -39,8 +39,9 @@ class Wikibrain < Formula
       The default workspace root is your home directory. Use one or more
       --workspace PATH options when you want a narrower capture allowlist.
 
-      Codex users must start a new session, open /hooks, and trust the
-      reviewed WikiBrain definitions.
+      Codex manual recall and remember commands work immediately. Automatic
+      Codex capture and recall require a new session plus /hooks review of the
+      current definition hash. brainctl does not inspect or bypass that trust.
 
       After a future brew upgrade, refresh the managed shim and skills with:
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import tempfile
 import threading
 import unittest
@@ -410,6 +411,74 @@ class ReleaseRegressionTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn('"initialized": false', output.getvalue())
             self.assertIn('"status": "degraded"', output.getvalue())
+
+    def test_init_reports_codex_manual_and_automatic_readiness_separately(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = StringIO()
+            with redirect_stdout(output):
+                code = main(
+                    [
+                        "--home",
+                        str(root / "brain"),
+                        "init",
+                        "--clients",
+                        "codex",
+                        "--no-hooks",
+                        "--agents-skill-dir",
+                        str(root / "agents-skill"),
+                        "--json",
+                    ]
+                )
+
+            payload = json.loads(output.getvalue())
+            self.assertEqual(code, 0, payload)
+            self.assertEqual(
+                payload["client_readiness"]["manual_commands"],
+                "ready",
+            )
+            self.assertEqual(
+                payload["client_readiness"]["codex_manual_skill"],
+                "installed-for-new-session",
+            )
+            self.assertEqual(
+                payload["client_readiness"]["codex_automatic_hooks"],
+                "not-installed",
+            )
+            self.assertIn(
+                "does not grant, bypass, or inspect hook trust",
+                payload["client_readiness"]["codex_trust_owner"],
+            )
+            self.assertIn("Manual mode is ready", payload["next"])
+
+            output = StringIO()
+            with redirect_stdout(output):
+                code = main(
+                    [
+                        "--home",
+                        str(root / "automatic-brain"),
+                        "init",
+                        "--clients",
+                        "codex",
+                        "--command",
+                        sys.executable,
+                        "--codex-hooks",
+                        str(root / "codex-hooks.json"),
+                        "--agents-skill-dir",
+                        str(root / "automatic-agents-skill"),
+                        "--json",
+                    ]
+                )
+
+            payload = json.loads(output.getvalue())
+            self.assertEqual(code, 0, payload)
+            self.assertEqual(
+                payload["client_readiness"]["codex_automatic_hooks"],
+                "codex-review-required-unless-already-trusted",
+            )
+            self.assertIn("open /hooks", payload["next"])
 
     def test_failed_explicit_promotion_is_retried_from_its_own_outbox(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -912,8 +912,9 @@ class MemorySafetyTests(unittest.TestCase):
             home = root / "would-be-brain"
             user_home = root / "user-home"
             user_home.mkdir()
+            output = StringIO()
             with patch("wikibrain.cli.default_workspace", return_value=user_home):
-                with redirect_stdout(StringIO()):
+                with redirect_stdout(output):
                     code = main(
                         [
                             "--home",
@@ -927,6 +928,12 @@ class MemorySafetyTests(unittest.TestCase):
                     )
             self.assertEqual(code, 0)
             self.assertFalse(home.exists())
+            payload = json.loads(output.getvalue())
+            self.assertEqual(
+                payload["client_readiness"]["manual_commands"],
+                "not-installed-dry-run",
+            )
+            self.assertIn("no files were changed", payload["next"])
 
     def test_doctor_reports_dirty_index_and_missing_hooks_as_degraded(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

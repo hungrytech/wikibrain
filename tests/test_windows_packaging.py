@@ -50,6 +50,21 @@ class WindowsPackagingTests(unittest.TestCase):
                 self.assertIn(f"`{event}`", english)
                 self.assertIn(f"`{event}`", korean)
 
+    def test_getting_started_explains_codex_trust_boundary(self) -> None:
+        english = (ROOT / "README.md").read_text(encoding="utf-8")
+        korean = (ROOT / "README.ko.md").read_text(encoding="utf-8")
+
+        self.assertIn("## Getting Started", english)
+        self.assertIn("## 시작하기", korean)
+        for document in (english, korean):
+            with self.subTest(document=document[:20]):
+                self.assertIn("brainctl remember", document)
+                self.assertIn("brainctl recall", document)
+                self.assertIn("--clients codex --no-hooks", document)
+                self.assertIn("--dangerously-bypass-hook-trust", document)
+                self.assertIn("requirements.toml", document)
+                self.assertIn("Cobalt-719", document)
+
 
 if __name__ == "__main__":
     unittest.main()

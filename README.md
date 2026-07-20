@@ -27,6 +27,94 @@ stores durable context as readable Markdown, and uses
 - Capture is allowlisted, pauseable, inspectable, and deletable.
 - Markdown remains yours even if you switch models or coding agents.
 
+## Getting Started
+
+This is the shortest safe path from installation to a working second brain.
+The detailed platform installers and every file they change are documented
+below.
+
+### 1. Install and initialize
+
+On macOS or Linux:
+
+```bash
+brew install hungrytech/tap/wikibrain
+brainctl init
+brainctl doctor
+```
+
+On native Windows, use the reviewable PowerShell installer in
+[Native Windows](#native-windows), including its explicit `-Initialize`
+switch.
+
+`brainctl init` creates the private brain, installs the WikiBrain skills, and
+registers the selected lifecycle hooks. `brainctl doctor` verifies the files,
+executables, database, and Wikimap index. It does not inspect or change
+Codex's separate hook-trust decision.
+
+### 2. Start a fresh agent session
+
+| Client mode | Ready after `brainctl init`? | One-time next step |
+|---|---|---|
+| Claude Code automatic memory | Yes, in a new session | None. `/hooks` is available for optional inspection. |
+| Codex manual memory | CLI commands work immediately; the skill loads in a new session | `brainctl remember`/`recall` and the installed WikiBrain skill need no hook trust. |
+| Codex automatic capture and recall | Definitions are installed, but an untrusted definition is skipped | Start a new Codex session, open `/hooks`, inspect the five WikiBrain definitions, and trust their current hash. |
+
+### 3. Run a smoke test
+
+Save and retrieve a harmless marker without depending on either agent:
+
+```bash
+brainctl remember --global --title "WikiBrain smoke test" "My WikiBrain verification marker is Cobalt-719."
+brainctl recall "Cobalt-719"
+```
+
+The recall result should contain `Cobalt-719` and a local Markdown source. The
+`remember` result includes a document ID; remove the test afterward if desired:
+
+```bash
+brainctl forget --document DOCUMENT_ID --apply
+```
+
+After opening a new Claude session, or a Codex session whose hooks you trusted,
+say “remember that my preferred test command is `make check`.” Complete the
+turn, start another session in the same repository, and ask which test command
+you prefer. This verifies conversational capture, promotion, indexing, and
+cross-session recall together.
+
+### Can Codex run from `init` without hook trust?
+
+Partly:
+
+- **Manual commands work immediately.** `brainctl init` installs the shared
+  WikiBrain skill for the next Codex session, and both `brainctl remember` and
+  `brainctl recall` work before hook approval.
+- **Automatic mode cannot be safely enabled by a normal personal installer.**
+  Codex requires review of every non-managed command-hook definition and stores
+  trust against its current hash. Until then, Codex skips the hook, so
+  automatic prompt capture, turn archival, and context injection do not run.
+- Codex documents `--dangerously-bypass-hook-trust`, but it applies only to
+  that invocation and Codex labels it dangerous. WikiBrain does not add this
+  flag to aliases, wrappers, or launch settings.
+- The only persistent no-review route is an administrator-managed hook policy
+  delivered through system, MDM, cloud, or `requirements.toml` configuration.
+  Those hooks are policy-enforced and cannot be disabled in the user hook
+  browser. WikiBrain intentionally does not claim or modify that administrator
+  trust boundary.
+
+For an explicit trust-free, manual-only Codex setup with no pending hook
+warning:
+
+```bash
+brainctl init --clients codex --no-hooks
+brainctl remember --global "A durable fact"
+brainctl recall "that durable fact"
+```
+
+This installs the Codex/Agents skill but disables automatic lifecycle capture
+and recall. See the official [Codex hooks documentation](https://learn.chatgpt.com/docs/hooks)
+for the host-enforced trust model.
+
 ## Install
 
 Installation and initialization are deliberately separate:
@@ -55,7 +143,7 @@ review it, then installs and initializes WikiBrain:
 ```powershell
 $installer = Join-Path $env:TEMP "install-wikibrain.ps1"
 Invoke-WebRequest `
-  "https://raw.githubusercontent.com/hungrytech/wikibrain/v0.1.2/scripts/install-windows.ps1" `
+  "https://raw.githubusercontent.com/hungrytech/wikibrain/v0.1.3/scripts/install-windows.ps1" `
   -OutFile $installer
 Get-Content $installer
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
@@ -203,6 +291,10 @@ PowerShell shim, which then invokes the stable `brainctl.exe` installed by
   command hooks do not run until you review and trust their current definition
   hash. Start a new Codex session, open `/hooks`, inspect the five definitions,
   and trust them. A later definition change requires review again.
+- `brainctl doctor` verifies that the configured definitions and executable are
+  valid. WikiBrain intentionally does not read or change Codex's internal
+  persisted trust state, so an `ok` doctor result does not replace `/hooks`
+  review.
 
 See the official [Claude Code hooks guide](https://code.claude.com/docs/en/hooks-guide)
 and [Codex hooks documentation](https://learn.chatgpt.com/docs/hooks) for the

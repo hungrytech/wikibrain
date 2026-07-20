@@ -4,6 +4,27 @@ All notable changes to WikiBrain are documented in this file.
 
 The project follows [Semantic Versioning](https://semver.org/).
 
+## [0.1.3] - 2026-07-21
+
+### Added
+
+- English and Korean Getting Started guides covering installation,
+  initialization, first-session activation, a reversible memory smoke test,
+  and conversational cross-session verification.
+- An explicit trust-free Codex manual mode using the installed WikiBrain skill
+  and `brainctl remember`/`recall`, including a `--no-hooks` setup example.
+
+### Changed
+
+- `brainctl init` now reports manual-command, skill, and automatic-hook
+  readiness separately instead of implying that installed Codex hooks are
+  already active.
+- `brainctl doctor` now states that it validates Codex hook files and
+  executables without inspecting or changing Codex's persisted hook trust.
+- Documented why normal Codex automatic hooks require `/hooks` review, why the
+  one-invocation dangerous bypass is not installed, and why administrator
+  managed hooks are outside WikiBrain's personal-install trust boundary.
+
 ## [0.1.2] - 2026-07-20
 
 ### Added

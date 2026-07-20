@@ -1,0 +1,70 @@
+class Wikibrain < Formula
+  include Language::Python::Virtualenv
+
+  desc "Local-first personal memory bridge for Claude Code and Codex"
+  homepage "https://github.com/@OWNER@/wikibrain"
+  url "@SOURCE_URL@"
+  sha256 "@SOURCE_SHA256@"
+  license "MIT"
+
+  depends_on "python@3.13"
+
+  resource "setuptools" do
+    url "https://files.pythonhosted.org/packages/5d/40/e1e72872c6354b306daef1703549e8e83b4d43cfea356311bf722a043752/setuptools-83.0.0-py3-none-any.whl"
+    sha256 "29b23c360f22f414dc7336bb39178cc7bcbf6021ed2733cde173f09dba19abb3"
+  end
+
+  resource "wikimap" do
+    url "https://files.pythonhosted.org/packages/e6/78/02b369cddd288f009f43706a9219695e37aa772bb9856e2090fb5eacc1f9/wikimap-1.1.0.tar.gz"
+    sha256 "75d5bfa358b8b924c05c58b41744eb699c3fbf7bbab852ad60ea3dd95b07c781"
+  end
+
+  def install
+    # Both projects use setuptools as their PEP 517 backend. Install the
+    # pinned backend first, then disable isolated network resolution.
+    venv = virtualenv_create(libexec, "python3.13")
+    venv.pip_install resource("setuptools"), build_isolation: false
+    venv.pip_install_and_link resource("wikimap"), build_isolation: false
+    venv.pip_install_and_link buildpath, build_isolation: false
+  end
+
+  def caveats
+    <<~EOS
+      WikiBrain does not edit agent settings during brew install.
+      Initialize the private vault and install reviewed hooks explicitly:
+
+        brainctl init --workspace /path/to/project
+        brainctl doctor
+
+      Codex users must start a new session, open /hooks, and trust the
+      reviewed WikiBrain definitions.
+
+      After a future brew upgrade, refresh the managed shim and skills with:
+
+        brainctl setup
+        brainctl doctor
+
+      Personal data lives outside the Homebrew Cellar and is preserved by
+      brew uninstall. Remove hooks and generated skills first with:
+
+        brainctl hooks uninstall
+        brainctl skills uninstall
+    EOS
+  end
+
+  test do
+    ENV["WIKIBRAIN_HOME"] = testpath/"brain"
+    ENV.prepend_path "PATH", bin
+
+    assert_match "brainctl @VERSION@", shell_output("#{bin}/brainctl --version")
+    assert_match "wikimap 1.1.0", shell_output("#{bin}/wikimap --version")
+
+    system bin/"brainctl", "init",
+           "--no-hooks", "--no-skills", "--workspace", testpath.to_s
+    assert_path_exists testpath/"brain/config.json"
+
+    doctor = shell_output("#{bin}/brainctl doctor --skip-hooks --json")
+    assert_match '"initialized": true', doctor
+    assert_match '"status": "ok"', doctor
+  end
+end

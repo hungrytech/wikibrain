@@ -1,0 +1,13 @@
+{
+  "session_id": "claude-turn",
+  "transcript_path": "/tmp/claude-turn.jsonl",
+  "cwd": "/tmp/project",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "/tmp/project/config.toml",
+    "content": "API_KEY=must-not-be-stored"
+  },
+  "tool_response": "full file content must not be stored",
+  "tool_use_id": "tool-claude-1"
+}

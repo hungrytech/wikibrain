@@ -1,0 +1,268 @@
+from __future__ import annotations
+
+import json
+import re
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, Mapping
+
+from .config import BrainConfig, atomic_write_text
+from .redaction import redact_text
+from .storage import (
+    BrainStore,
+    explicit_memory_id,
+    handoff_document_id,
+    stable_hash,
+    turn_document_id,
+)
+from .wikimap_adapter import WikimapAdapter, WikimapError
+
+
+_REMEMBER_PATTERN = re.compile(
+    r"^\s*(?:기억(?:해|해줘|해\s*두|해둬)|잊지\s*마|"
+    r"(?:please\s+)?remember(?:\s+this)?\b|don't forget\b)",
+    re.IGNORECASE,
+)
+
+
+def _yaml_string(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _safe_name(value: str, length: int = 36) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9가-힣._-]+", "-", value).strip("-._")
+    return (cleaned or "item")[:length]
+
+
+class Curator:
+    def __init__(
+        self,
+        config: BrainConfig,
+        store: BrainStore,
+        wikimap: WikimapAdapter,
+    ):
+        self.config = config
+        self.store = store
+        self.wikimap = wikimap
+
+    def _write(self, relative: Path, content: str) -> Path:
+        path = self.config.vault_path / relative
+        atomic_write_text(path, content)
+        return path
+
+    def archive_turn(self, turn: Mapping[str, Any]) -> tuple[str, Path]:
+        completed = str(turn["completed_at"] or turn["created_at"])
+        try:
+            moment = datetime.fromisoformat(completed)
+        except ValueError:
+            moment = datetime.now(UTC)
+        document_id = turn_document_id(
+            str(turn["provider"]),
+            str(turn["session_id"]),
+            str(turn["turn_key"]),
+            str(turn["cwd"]),
+        )
+        relative = (
+            Path("sessions")
+            / moment.strftime("%Y")
+            / moment.strftime("%m")
+            / moment.strftime("%d")
+            / f"{_safe_name(str(turn['provider']))}-{document_id}.md"
+        )
+        prompt = str(turn["prompt"] or "(prompt unavailable)")
+        response = str(turn["response"] or "(response unavailable)")
+        content = f"""---
+id: {_yaml_string(document_id)}
+type: "session"
+provider: {_yaml_string(str(turn["provider"]))}
+session_id: {_yaml_string(str(turn["session_id"]))}
+turn_id: {_yaml_string(str(turn["turn_key"]))}
+workspace: {_yaml_string(str(turn["cwd"]))}
+captured_at: {_yaml_string(completed)}
+---
+
+# Conversation handoff
+
+## User
+
+{prompt}
+
+## Assistant
+
+{response}
+"""
+        path = self._write(relative, content)
+        registered = self.store.register_document(
+            document_id,
+            "session",
+            path,
+            provider=str(turn["provider"]),
+            session_id=str(turn["session_id"]),
+            turn_key=str(turn["turn_key"]),
+            workspace=str(turn["cwd"]),
+            metadata={"captured_at": completed},
+        )
+        if not registered:
+            path.unlink(missing_ok=True)
+        return document_id, path
+
+    def archive_handoff(
+        self,
+        provider: str,
+        session_id: str,
+        workspace: str,
+        summary: str,
+    ) -> tuple[str, Path]:
+        now = datetime.now(UTC)
+        document_id = handoff_document_id(
+            provider,
+            session_id,
+            workspace,
+            summary,
+        )
+        relative = (
+            Path("handoffs")
+            / now.strftime("%Y")
+            / now.strftime("%m")
+            / f"{_safe_name(provider)}-{document_id}.md"
+        )
+        content = f"""---
+id: {_yaml_string(document_id)}
+type: "handoff"
+provider: {_yaml_string(provider)}
+session_id: {_yaml_string(session_id)}
+workspace: {_yaml_string(workspace)}
+captured_at: {_yaml_string(now.isoformat(timespec="milliseconds"))}
+---
+
+# Compaction handoff
+
+{summary}
+"""
+        path = self._write(relative, content)
+        registered = self.store.register_document(
+            document_id,
+            "handoff",
+            path,
+            provider=provider,
+            session_id=session_id,
+            workspace=workspace,
+        )
+        if not registered:
+            path.unlink(missing_ok=True)
+        return document_id, path
+
+    def remember(
+        self,
+        text: str,
+        *,
+        title: str | None = None,
+        workspace: str | None = None,
+        source: str = "manual",
+        update_index: bool = True,
+        document_id: str | None = None,
+        captured_at: str | None = None,
+        provider: str | None = None,
+        session_id: str | None = None,
+        turn_key: str | None = None,
+    ) -> tuple[str, Path]:
+        redacted = redact_text(text, self.config.max_field_chars)
+        try:
+            now = datetime.fromisoformat(captured_at) if captured_at else datetime.now(UTC)
+        except ValueError:
+            now = datetime.now(UTC)
+        proposed_title = title or next(
+            (line.strip("# ").strip() for line in redacted.text.splitlines() if line.strip()),
+            "Memory",
+        )
+        title_redaction = redact_text(proposed_title, 500)
+        safe_title = " ".join(title_redaction.text.split())[:200] or "Memory"
+        timestamp = now.isoformat(timespec="milliseconds")
+        document_id = document_id or (
+            "memory-" + stable_hash(safe_title, redacted.text, timestamp)[:24]
+        )
+        relative = (
+            Path("memories")
+            / now.strftime("%Y")
+            / now.strftime("%m")
+            / f"{_safe_name(safe_title, 48)}-{document_id}.md"
+        )
+        content = f"""---
+id: {_yaml_string(document_id)}
+type: "memory"
+title: {_yaml_string(safe_title)}
+source: {_yaml_string(source)}
+workspace: {_yaml_string(workspace or "")}
+captured_at: {_yaml_string(timestamp)}
+---
+
+# {safe_title}
+
+{redacted.text}
+"""
+        path = self._write(relative, content)
+        registered = self.store.register_document(
+            document_id,
+            "memory",
+            path,
+            provider=provider,
+            session_id=session_id,
+            turn_key=turn_key,
+            workspace=workspace,
+            metadata={
+                "source": source,
+                "redactions": redacted.count + title_redaction.count,
+            },
+        )
+        if not registered:
+            path.unlink(missing_ok=True)
+        if update_index:
+            self.update_index()
+        return document_id, path
+
+    def maybe_promote_explicit(self, turn: Mapping[str, Any]) -> tuple[str, Path] | None:
+        prompt = str(turn["prompt"] or "")
+        if not _REMEMBER_PATTERN.search(prompt):
+            return None
+        provider = str(turn["provider"])
+        session_id = str(turn["session_id"])
+        turn_key = str(turn["turn_key"])
+        document_id = explicit_memory_id(
+            provider,
+            session_id,
+            turn_key,
+            str(turn["cwd"]),
+        )
+        if self.store.document(document_id):
+            self.store.complete_promotion(provider, session_id, turn_key)
+            return None
+        if self.store.tombstone_receipt(f"document:{document_id}"):
+            self.store.complete_promotion(provider, session_id, turn_key)
+            return None
+        if not self.store.queue_promotion(provider, session_id, turn_key):
+            return None
+        promoted = self.remember(
+            f"User request:\n{prompt}",
+            title="Explicitly requested memory",
+            workspace=str(turn["cwd"]),
+            source=f"{provider}:{session_id}:{turn_key}",
+            update_index=False,
+            document_id=document_id,
+            captured_at=str(turn["completed_at"] or turn["created_at"]),
+            provider=provider,
+            session_id=session_id,
+            turn_key=turn_key,
+        )
+        if self.store.document(document_id) is None:
+            self.store.complete_promotion(provider, session_id, turn_key)
+            return None
+        self.store.complete_promotion(provider, session_id, turn_key)
+        return promoted
+
+    def update_index(self) -> bool:
+        generation = self.store.index_generation()
+        try:
+            self.wikimap.update()
+            return self.store.mark_index_clean(generation)
+        except WikimapError:
+            return False

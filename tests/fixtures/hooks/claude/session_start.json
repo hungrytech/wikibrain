@@ -1,0 +1,9 @@
+{
+  "session_id": "claude-session-start",
+  "transcript_path": "/tmp/claude-session-start.jsonl",
+  "cwd": "/tmp/project",
+  "permission_mode": "default",
+  "hook_event_name": "SessionStart",
+  "source": "startup",
+  "model": "claude-test"
+}

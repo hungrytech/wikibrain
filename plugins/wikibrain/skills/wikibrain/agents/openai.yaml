@@ -1,0 +1,4 @@
+interface:
+  display_name: "WikiBrain"
+  short_description: "Recall and curate your local second brain"
+  default_prompt: "Use $wikibrain to recall relevant personal context before helping me."

@@ -1,0 +1,8 @@
+{
+  "session_id": "claude-turn",
+  "transcript_path": "/tmp/claude-turn.jsonl",
+  "cwd": "/tmp/project",
+  "permission_mode": "default",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "Remember that Project Atlas uses port 6432."
+}

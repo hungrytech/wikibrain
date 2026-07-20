@@ -1,0 +1,8 @@
+{
+  "session_id": "claude-turn",
+  "transcript_path": "/tmp/claude-turn.jsonl",
+  "cwd": "/tmp/project",
+  "hook_event_name": "PostCompact",
+  "trigger": "auto",
+  "compact_summary": "Atlas configuration work is ready to continue."
+}

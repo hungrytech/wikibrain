@@ -1,0 +1,13 @@
+{
+  "session_id": "codex-turn",
+  "turn_id": "codex-turn-1",
+  "transcript_path": "/tmp/codex-turn.jsonl",
+  "cwd": "/tmp/project",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "apply_patch",
+  "tool_input": {
+    "file_path": "/tmp/project/storage.py"
+  },
+  "tool_response": "full patch must not be stored",
+  "tool_use_id": "tool-codex-1"
+}

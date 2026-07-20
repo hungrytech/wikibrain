@@ -1,0 +1,9 @@
+{
+  "session_id": "codex-turn",
+  "turn_id": "codex-turn-1",
+  "transcript_path": "/tmp/codex-turn.jsonl",
+  "cwd": "/tmp/project",
+  "permission_mode": "default",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "Remember that Project Borealis uses SQLite WAL."
+}

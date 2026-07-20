@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wikibrain-agent"
+version = "0.1.0"
+description = "Local-first personal memory bridge for Claude Code, Codex, and Wikimap"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Taekmin Lee" }]
+keywords = ["second-brain", "wikimap", "claude-code", "codex", "hooks"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Utilities",
+]
+dependencies = ["wikimap>=1.1.0,<2"]
+
+[project.urls]
+Homepage = "https://github.com/hungrytech/wikibrain"
+Repository = "https://github.com/hungrytech/wikibrain"
+Issues = "https://github.com/hungrytech/wikibrain/issues"
+Changelog = "https://github.com/hungrytech/wikibrain/blob/main/CHANGELOG.md"
+
+[project.scripts]
+brainctl = "wikibrain.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+wikibrain = ["resources/*.json"]
+
+[tool.setuptools.data-files]
+"share/wikibrain/skills/wikibrain" = [
+  "plugins/wikibrain/skills/wikibrain/SKILL.md",
+]
+"share/wikibrain/skills/wikibrain/agents" = [
+  "plugins/wikibrain/skills/wikibrain/agents/openai.yaml",
+]
+"share/wikibrain/skills/wikibrain/references" = [
+  "plugins/wikibrain/skills/wikibrain/references/command-reference.md",
+]

@@ -1,0 +1,64 @@
+{
+  "description": "WikiBrain local memory capture and recall hooks.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$PLUGIN_ROOT\"/scripts/brain-hook",
+            "timeout": 5,
+            "statusMessage": "WikiBrain: recalling local memory"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$PLUGIN_ROOT\"/scripts/brain-hook",
+            "timeout": 8
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|Edit|Write|NotebookEdit|apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$PLUGIN_ROOT\"/scripts/brain-hook",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$PLUGIN_ROOT\"/scripts/brain-hook",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "matcher": "manual|auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$PLUGIN_ROOT\"/scripts/brain-hook",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}

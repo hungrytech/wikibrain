@@ -1,0 +1,10 @@
+#!/bin/sh
+
+# Plugin hooks share the brainctl installed by Homebrew or pipx. Missing
+# brainctl is fail-open so Codex can keep working.
+if command -v brainctl >/dev/null 2>&1; then
+  exec brainctl hook --provider codex
+fi
+
+printf '{}\n'
+exit 0

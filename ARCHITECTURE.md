@@ -43,6 +43,8 @@ preferred.
 
 Hooks are fail-open. Invalid input, a busy database, a missing Wikimap command,
 or a timeout produces valid empty JSON and cannot block the coding agent.
+macOS and Linux use a POSIX shim; native Windows uses a PowerShell shim,
+Claude's PowerShell exec form, and Codex's `commandWindows` override.
 Completed turns and redacted compaction summaries are first persisted as SQLite
 outbox work. If Markdown archiving fails, the next hook—including a fresh
 `SessionStart`—drains that work before recall, so fail-open does not mean
@@ -77,7 +79,8 @@ zero-configuration root is the user's home directory, while Git repositories
 inside it remain separate recall scopes. Secrets are redacted before SQLite or
 Markdown writes, full tool results and shell commands are omitted (only
 file/workdir pointers remain), files are mode `0600`, and state directories
-are mode `0700`.
+are mode `0700` on POSIX. Native Windows stores state under the user's local
+application-data profile and inherits that profile's ACL.
 
 The archive is redacted plaintext; SQLite WAL is not encryption. Full-disk
 encryption is recommended until an optional Keychain-backed encryption layer is

@@ -18,6 +18,11 @@ def default_home() -> Path:
     override = os.environ.get("WIKIBRAIN_HOME")
     if override:
         return Path(override).expanduser().resolve()
+    if os.name == "nt":
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            return (Path(local_app_data).expanduser() / "WikiBrain").resolve()
+        return (Path.home() / "AppData" / "Local" / "WikiBrain").resolve()
     data_home = os.environ.get("XDG_DATA_HOME")
     if data_home:
         return (Path(data_home).expanduser() / "wikibrain").resolve()

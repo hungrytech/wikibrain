@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -26,12 +27,27 @@ class WikimapAdapter:
     @property
     def available(self) -> bool:
         command_path = Path(self.command).expanduser()
-        if command_path.is_absolute() or "/" in self.command:
+        if (
+            command_path.is_absolute()
+            or "/" in self.command
+            or "\\" in self.command
+        ):
+            if command_path.suffix.casefold() == ".py":
+                return command_path.is_file()
             return (
                 command_path.is_file()
                 and os.access(command_path, os.X_OK)
             )
         return shutil.which(self.command) is not None
+
+    def _command_arguments(self) -> list[str]:
+        command_path = Path(self.command).expanduser()
+        if (
+            command_path.suffix.casefold() == ".py"
+            and command_path.is_file()
+        ):
+            return [sys.executable, str(command_path)]
+        return [self.command]
 
     def _run(self, arguments: list[str], timeout: float | None = None) -> str:
         if not self.available:
@@ -48,7 +64,10 @@ class WikimapAdapter:
             }
             if os.name == "posix":
                 options["umask"] = 0o077
-            completed = subprocess.run([self.command, *arguments], **options)
+            completed = subprocess.run(
+                [*self._command_arguments(), *arguments],
+                **options,
+            )
         except subprocess.TimeoutExpired as error:
             raise WikimapError(f"wikimap {operation} timed out") from error
         except OSError as error:

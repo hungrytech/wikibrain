@@ -6,7 +6,12 @@ import unittest
 from pathlib import Path
 
 from wikibrain.config import BrainConfig
-from wikibrain.installer import install_hooks, uninstall_hooks
+from wikibrain.installer import (
+    EVENTS,
+    _is_owned_handler,
+    install_hooks,
+    uninstall_hooks,
+)
 
 
 class InstallerTests(unittest.TestCase):
@@ -55,9 +60,15 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual([item["changes"] for item in second], [0, 0])
         claude_payload = json.loads(self.claude.read_text(encoding="utf-8"))
         self.assertEqual(claude_payload["theme"], "dark")
-        commands = json.dumps(claude_payload)
-        self.assertEqual(commands.count("hook --provider claude"), 5)
-        self.assertIn("echo existing", commands)
+        owned = [
+            handler
+            for event in EVENTS
+            for group in claude_payload["hooks"][event]
+            for handler in group.get("hooks", [])
+            if _is_owned_handler(handler, "claude")
+        ]
+        self.assertEqual(len(owned), 5)
+        self.assertIn("echo existing", json.dumps(claude_payload))
 
         removed = uninstall_hooks(
             self.config, ["claude", "codex"], paths=self.paths

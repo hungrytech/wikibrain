@@ -15,6 +15,7 @@ from .config import BrainConfig, atomic_write_text, ensure_private_directory
 CLIENTS = {"claude", "codex"}
 EVENTS = ("SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "PostCompact")
 HOOK_SHIM_NAME = "wikibrain-hook"
+WINDOWS_HOOK_SHIM_NAME = "wikibrain-hook.ps1"
 EXECUTABLE_FILE_MODE = 0o700
 
 
@@ -30,14 +31,19 @@ def resolve_brainctl(command: str | None = None) -> str:
     selected = command or shutil.which("brainctl")
     if not selected:
         invoked = Path(sys.argv[0]).expanduser()
-        if invoked.name == "brainctl" and invoked.exists():
+        if invoked.stem == "brainctl" and invoked.exists():
             selected = os.path.abspath(str(invoked))
     if not selected:
         raise FileNotFoundError(
             "brainctl is not on PATH; pass --command with its absolute path"
         )
     path = Path(selected).expanduser()
-    if path.exists() or path.is_absolute() or len(path.parts) > 1:
+    if (
+        path.exists()
+        or path.is_absolute()
+        or "/" in selected
+        or "\\" in selected
+    ):
         # Keep a stable, user-facing symlink such as /opt/homebrew/bin/brainctl.
         # Resolving it would pin the shim to a versioned Homebrew Cellar path.
         return os.path.abspath(str(path))
@@ -45,10 +51,11 @@ def resolve_brainctl(command: str | None = None) -> str:
 
 
 def _shim_path(config: BrainConfig) -> Path:
-    return config.home_path / "bin" / HOOK_SHIM_NAME
+    name = WINDOWS_HOOK_SHIM_NAME if os.name == "nt" else HOOK_SHIM_NAME
+    return config.home_path / "bin" / name
 
 
-def _shim_content(executable: str) -> str:
+def _posix_shim_content(executable: str) -> str:
     quoted = shlex.quote(executable)
     executable_path = Path(executable).expanduser()
     path_setup = ""
@@ -76,6 +83,51 @@ def _shim_content(executable: str) -> str:
     )
 
 
+def _powershell_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _windows_shim_content(executable: str) -> str:
+    target = _powershell_literal(executable)
+    return (
+        "# wikibrain-managed-hook:v1\n"
+        f"# wikibrain-target-json:{json.dumps(executable)}\n"
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        f"$target = {target}\n"
+        "$resolved = $null\n"
+        "if ([System.IO.Path]::IsPathRooted($target)) {\n"
+        "  if (Test-Path -LiteralPath $target -PathType Leaf) {\n"
+        "    $resolved = $target\n"
+        "  }\n"
+        "} else {\n"
+        "  $found = Get-Command -Name $target -CommandType Application "
+        "-ErrorAction SilentlyContinue | Select-Object -First 1\n"
+        "  if ($null -ne $found) {\n"
+        "    $resolved = $found.Source\n"
+        "  }\n"
+        "}\n"
+        "if ($null -ne $resolved) {\n"
+        "  $parent = Split-Path -LiteralPath $resolved -Parent\n"
+        "  if ($parent) {\n"
+        "    $env:PATH = \"$parent;$env:PATH\"\n"
+        "  }\n"
+        "  & $resolved @args\n"
+        "  if ($null -eq $LASTEXITCODE) {\n"
+        "    exit 0\n"
+        "  }\n"
+        "  exit $LASTEXITCODE\n"
+        "}\n"
+        "[Console]::Out.WriteLine('{}')\n"
+        "exit 0\n"
+    )
+
+
+def _shim_content(executable: str) -> str:
+    if os.name == "nt":
+        return _windows_shim_content(executable)
+    return _posix_shim_content(executable)
+
+
 def _install_shim(config: BrainConfig, executable: str) -> Path:
     path = _shim_path(config)
     atomic_write_text(
@@ -86,6 +138,14 @@ def _install_shim(config: BrainConfig, executable: str) -> Path:
     return path
 
 
+def _windows_command(command: str, client: str) -> str:
+    return (
+        "powershell.exe -NoLogo -NoProfile -NonInteractive "
+        f'-ExecutionPolicy Bypass -File "{command}" '
+        f"hook --provider {client}"
+    )
+
+
 def _handler(command: str, client: str, event: str) -> dict[str, Any]:
     if event in {"Stop", "PostCompact"}:
         timeout = 20
@@ -93,11 +153,39 @@ def _handler(command: str, client: str, event: str) -> dict[str, Any]:
         timeout = 8
     else:
         timeout = 5
-    handler: dict[str, Any] = {
-        "type": "command",
-        "command": f"{shlex.quote(command)} hook --provider {client}",
-        "timeout": timeout,
-    }
+    if command.casefold().endswith(".ps1"):
+        if client == "claude":
+            handler = {
+                "type": "command",
+                "command": "powershell.exe",
+                "args": [
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    command,
+                    "hook",
+                    "--provider",
+                    client,
+                ],
+                "timeout": timeout,
+            }
+        else:
+            windows_command = _windows_command(command, client)
+            handler = {
+                "type": "command",
+                "command": windows_command,
+                "commandWindows": windows_command,
+                "timeout": timeout,
+            }
+    else:
+        handler = {
+            "type": "command",
+            "command": f"{shlex.quote(command)} hook --provider {client}",
+            "timeout": timeout,
+        }
     if event == "SessionStart":
         handler["statusMessage"] = "WikiBrain: recalling local memory"
     return handler
@@ -114,38 +202,100 @@ def hook_group(command: str, client: str, event: str) -> dict[str, Any]:
     return group
 
 
-def _is_owned_handler(handler: Any, client: str) -> bool:
+def _command_basename(command: str) -> str:
+    return command.strip("\"'").replace("\\", "/").rsplit("/", 1)[-1]
+
+
+def _owned_executable(handler: Any, client: str) -> str | None:
     if not isinstance(handler, dict):
-        return False
+        return None
+    arguments = handler.get("args")
     command = handler.get("command")
+    if isinstance(arguments, list) and all(
+        isinstance(value, str) for value in arguments
+    ):
+        if not isinstance(command, str):
+            return None
+        if (
+            _command_basename(command).casefold()
+            not in {"powershell.exe", "pwsh.exe"}
+            or arguments[-3:] != ["hook", "--provider", client]
+        ):
+            return None
+        file_indexes = [
+            index
+            for index, value in enumerate(arguments)
+            if value.casefold() == "-file"
+        ]
+        if not file_indexes:
+            return None
+        index = file_indexes[-1]
+        if index + 1 >= len(arguments):
+            return None
+        executable = arguments[index + 1]
+        return (
+            executable
+            if _command_basename(executable).casefold()
+            in {WINDOWS_HOOK_SHIM_NAME, "brainctl.exe", "brainctl"}
+            else None
+        )
+
+    windows_command = handler.get("commandWindows")
+    if isinstance(windows_command, str) and windows_command:
+        command = windows_command
     if not isinstance(command, str):
-        return False
+        return None
     try:
         parts = shlex.split(command)
     except ValueError:
-        return False
+        return None
     if len(parts) < 4 or parts[-3:] != ["hook", "--provider", client]:
-        return False
-    executable_name = Path(parts[0]).name
-    return executable_name == HOOK_SHIM_NAME or "brainctl" in executable_name
+        return None
+    first_name = _command_basename(parts[0]).casefold()
+    if first_name in {"powershell.exe", "pwsh.exe"}:
+        file_indexes = [
+            index
+            for index, value in enumerate(parts)
+            if value.casefold() == "-file"
+        ]
+        if not file_indexes:
+            return None
+        index = file_indexes[-1]
+        if index + 1 >= len(parts):
+            return None
+        executable = parts[index + 1]
+    else:
+        executable = parts[0]
+    executable_name = _command_basename(executable).casefold()
+    if executable_name in {
+        HOOK_SHIM_NAME,
+        WINDOWS_HOOK_SHIM_NAME,
+        "brainctl",
+        "brainctl.exe",
+        "brainctl.cmd",
+    }:
+        return executable
+    return None
+
+
+def _is_owned_handler(handler: Any, client: str) -> bool:
+    return _owned_executable(handler, client) is not None
 
 
 def _handler_executable(handler: Any, client: str) -> str | None:
-    if not _is_owned_handler(handler, client):
-        return None
-    try:
-        parts = shlex.split(handler["command"])
-    except (KeyError, TypeError, ValueError):
-        return None
-    return parts[0] if parts else None
+    return _owned_executable(handler, client)
 
 
 def _command_is_executable(command: str) -> bool:
-    if "/" not in command:
+    if "/" not in command and "\\" not in command:
         selected = shutil.which(command)
-        return selected is not None and os.access(selected, os.X_OK)
+        return selected is not None and (
+            os.name == "nt" or os.access(selected, os.X_OK)
+        )
     path = Path(command).expanduser()
-    return path.is_file() and os.access(path, os.X_OK)
+    return path.is_file() and (
+        os.name == "nt" or os.access(path, os.X_OK)
+    )
 
 
 def _managed_shim_target(command: str) -> str | None:
@@ -441,7 +591,10 @@ def hook_status(
                         issues.append(f"{event}: command could not be parsed")
                         continue
                     executables.append(executable)
-                    if Path(executable).name != HOOK_SHIM_NAME:
+                    if _command_basename(executable).casefold() not in {
+                        HOOK_SHIM_NAME,
+                        WINDOWS_HOOK_SHIM_NAME,
+                    }:
                         desired = False
                         issues.append(f"{event}: persistent shim is not in use")
                     expected_group = hook_group(executable, client, event)

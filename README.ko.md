@@ -1,7 +1,7 @@
 # WikiBrain
 
 <p align="center">
-  <img src="docs/assets/wikibrain-mascot.svg" width="920" alt="로컬 노트를 정리하는 친근한 두뇌와 두 코딩 에이전트">
+  <img src="docs/assets/wikibrain-hero.png" width="920" alt="WikiBrain: 소년과 친근한 뇌 마스코트가 빛나는 연결 지식 지도를 탐색하는 모습">
 </p>
 
 <p align="center"><strong>오픈소스 · 로컬 우선 · 사용자 소유 · Markdown 기반</strong></p>

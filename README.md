@@ -1,9 +1,15 @@
 # WikiBrain
 
-WikiBrain gives Claude Code and Codex one local, user-owned memory. It captures
-redacted conversation handoffs through lifecycle hooks, stores durable context
-as readable Markdown, and uses [Wikimap](https://github.com/dhha22/wikimap)
-for fast source-aware recall.
+<p align="center">
+  <img src="docs/assets/wikibrain-mascot.svg" width="920" alt="A friendly brain organizing local notes with two robot coding assistants">
+</p>
+
+<p align="center"><strong>Open source · Local-first · User-owned · Markdown-native</strong></p>
+
+WikiBrain is an [MIT-licensed](LICENSE) shared second brain for Claude Code and
+Codex. It captures redacted conversation handoffs through lifecycle hooks,
+stores durable context as readable Markdown, and uses
+[Wikimap](https://github.com/dhha22/wikimap) for fast source-aware recall.
 
 ## Why it is useful
 

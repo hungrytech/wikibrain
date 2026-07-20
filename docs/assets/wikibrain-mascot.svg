@@ -1,0 +1,161 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">WikiBrain open-source mascot</title>
+  <desc id="desc">A cheerful brain organizes local notes with two small robot assistants.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f8f7ff"/>
+      <stop offset="1" stop-color="#eef8f5"/>
+    </linearGradient>
+    <linearGradient id="brain" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff9eb5"/>
+      <stop offset="1" stop-color="#f36f96"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="12" stdDeviation="12" flood-color="#29304c" flood-opacity=".14"/>
+    </filter>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="18"/>
+    </filter>
+  </defs>
+
+  <!-- calm local-first backdrop -->
+  <rect width="1200" height="630" rx="36" fill="url(#bg)"/>
+  <circle cx="135" cy="110" r="72" fill="#dfe5ff" opacity=".48" filter="url(#soft)"/>
+  <circle cx="1065" cy="510" r="84" fill="#ccefe1" opacity=".55" filter="url(#soft)"/>
+  <path d="M70 492 C260 434 392 548 590 488 S928 430 1134 497" fill="none" stroke="#d8dcef" stroke-width="3" stroke-dasharray="8 15"/>
+
+  <!-- knowledge graph -->
+  <g opacity=".88" stroke="#6f78d8" stroke-width="4" stroke-linecap="round">
+    <path d="M212 154 304 102 388 159 304 218Z" fill="none"/>
+    <path d="M304 102 304 218M212 154 388 159" fill="none" opacity=".55"/>
+  </g>
+  <g fill="#fff" stroke="#5661c7" stroke-width="4">
+    <circle cx="212" cy="154" r="13"/>
+    <circle cx="304" cy="102" r="13"/>
+    <circle cx="388" cy="159" r="13"/>
+    <circle cx="304" cy="218" r="13"/>
+  </g>
+
+  <!-- local home storage -->
+  <g transform="translate(898 90)" filter="url(#shadow)">
+    <path d="M28 82V34L92 0l64 34v48a16 16 0 0 1-16 16H44A16 16 0 0 1 28 82Z" fill="#fff" stroke="#30364d" stroke-width="5" stroke-linejoin="round"/>
+    <path d="M70 98V58h44v40" fill="#d6f2e8" stroke="#30364d" stroke-width="5" stroke-linejoin="round"/>
+    <circle cx="103" cy="78" r="4" fill="#30364d"/>
+    <path d="M62 38h60" stroke="#ee7898" stroke-width="7" stroke-linecap="round"/>
+  </g>
+
+  <!-- terminal card -->
+  <g transform="translate(820 205) rotate(5)" filter="url(#shadow)">
+    <rect width="220" height="132" rx="22" fill="#292e43"/>
+    <circle cx="24" cy="22" r="6" fill="#ff7d91"/>
+    <circle cx="44" cy="22" r="6" fill="#ffd476"/>
+    <circle cx="64" cy="22" r="6" fill="#76dbb0"/>
+    <path d="M28 60 49 76 28 92M68 94h58" fill="none" stroke="#cbd3ff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- central brain mascot -->
+  <g filter="url(#shadow)">
+    <!-- legs -->
+    <path d="M535 467q-11 47-45 70" fill="none" stroke="#30364d" stroke-width="11" stroke-linecap="round"/>
+    <path d="M655 467q11 47 45 70" fill="none" stroke="#30364d" stroke-width="11" stroke-linecap="round"/>
+    <path d="M458 541q31-16 58 0" fill="none" stroke="#30364d" stroke-width="12" stroke-linecap="round"/>
+    <path d="M674 541q31-16 58 0" fill="none" stroke="#30364d" stroke-width="12" stroke-linecap="round"/>
+    <!-- arms -->
+    <path d="M457 330q-55 25-78 68" fill="none" stroke="#30364d" stroke-width="11" stroke-linecap="round"/>
+    <path d="M739 326q51 20 74 62" fill="none" stroke="#30364d" stroke-width="11" stroke-linecap="round"/>
+    <circle cx="375" cy="401" r="13" fill="#ff8fac" stroke="#30364d" stroke-width="6"/>
+    <circle cx="816" cy="391" r="13" fill="#ff8fac" stroke="#30364d" stroke-width="6"/>
+
+    <!-- brain silhouette -->
+    <path d="M598 184
+      C555 147 493 162 478 209
+      C431 210 409 258 430 294
+      C394 326 415 382 457 389
+      C451 438 493 471 538 453
+      C562 481 609 479 632 451
+      C677 471 723 439 716 391
+      C760 376 774 321 738 292
+      C756 246 720 207 680 210
+      C664 165 624 158 598 184Z"
+      fill="url(#brain)" stroke="#30364d" stroke-width="7" stroke-linejoin="round"/>
+
+    <!-- brain folds -->
+    <g fill="none" stroke="#c84f78" stroke-width="8" stroke-linecap="round" opacity=".72">
+      <path d="M505 215q-35 19-22 53M477 305q42-24 70 10M489 386q35-25 66 4"/>
+      <path d="M559 191q-20 29 4 52M560 270q-24 29 2 58M558 353q-18 29 4 71"/>
+      <path d="M641 193q23 25 1 51M646 271q25 27 0 57M647 354q20 31-3 68"/>
+      <path d="M695 220q33 19 18 52M723 307q-40-23-68 9M708 385q-35-25-65 5"/>
+    </g>
+
+    <!-- glasses and face -->
+    <g fill="#fff9fb" stroke="#30364d" stroke-width="7">
+      <circle cx="548" cy="317" r="31"/>
+      <circle cx="650" cy="317" r="31"/>
+      <path d="M579 317q20-13 40 0" fill="none"/>
+    </g>
+    <circle cx="552" cy="320" r="9" fill="#30364d"/>
+    <circle cx="646" cy="320" r="9" fill="#30364d"/>
+    <circle cx="555" cy="316" r="3" fill="#fff"/>
+    <circle cx="649" cy="316" r="3" fill="#fff"/>
+    <path d="M570 369q29 28 58 0" fill="none" stroke="#30364d" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="500" cy="359" r="13" fill="#ffb2c3" opacity=".85"/>
+    <circle cx="697" cy="359" r="13" fill="#ffb2c3" opacity=".85"/>
+  </g>
+
+  <!-- left blue assistant -->
+  <g transform="translate(132 300)" filter="url(#shadow)">
+    <path d="M102 10v28" stroke="#30364d" stroke-width="7" stroke-linecap="round"/>
+    <circle cx="102" cy="7" r="10" fill="#7182ef" stroke="#30364d" stroke-width="5"/>
+    <rect x="36" y="36" width="132" height="112" rx="32" fill="#8090f4" stroke="#30364d" stroke-width="7"/>
+    <rect x="56" y="60" width="92" height="55" rx="22" fill="#f8f9ff"/>
+    <circle cx="82" cy="87" r="8" fill="#30364d"/>
+    <circle cx="122" cy="87" r="8" fill="#30364d"/>
+    <path d="M87 105q15 10 30 0" fill="none" stroke="#30364d" stroke-width="5" stroke-linecap="round"/>
+    <path d="M36 91Q0 93 0 126M168 93q38 7 53-22" fill="none" stroke="#30364d" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="221" cy="71" r="10" fill="#8090f4" stroke="#30364d" stroke-width="5"/>
+    <path d="M70 148v40M136 148v40" stroke="#30364d" stroke-width="9" stroke-linecap="round"/>
+    <path d="M53 190h35M119 190h35" stroke="#30364d" stroke-width="10" stroke-linecap="round"/>
+  </g>
+
+  <!-- right coral assistant -->
+  <g transform="translate(900 345)" filter="url(#shadow)">
+    <path d="M92 2v28" stroke="#30364d" stroke-width="7" stroke-linecap="round"/>
+    <circle cx="92" cy="0" r="10" fill="#ff8b77" stroke="#30364d" stroke-width="5"/>
+    <rect x="28" y="28" width="128" height="106" rx="30" fill="#ff937f" stroke="#30364d" stroke-width="7"/>
+    <rect x="48" y="50" width="88" height="53" rx="20" fill="#fff9f4"/>
+    <path d="M66 76h11M107 76h11" stroke="#30364d" stroke-width="8" stroke-linecap="round"/>
+    <path d="M76 94q16 10 32 0" fill="none" stroke="#30364d" stroke-width="5" stroke-linecap="round"/>
+    <path d="M28 83Q-9 72-26 40M156 84q38 10 46 43" fill="none" stroke="#30364d" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="-28" cy="38" r="10" fill="#ff937f" stroke="#30364d" stroke-width="5"/>
+    <path d="M60 134v40M124 134v40" stroke="#30364d" stroke-width="9" stroke-linecap="round"/>
+    <path d="M43 176h34M107 176h34" stroke="#30364d" stroke-width="10" stroke-linecap="round"/>
+  </g>
+
+  <!-- shared markdown-like note cards, icon-only -->
+  <g transform="translate(300 340) rotate(-8)" filter="url(#shadow)">
+    <rect width="142" height="104" rx="16" fill="#fff" stroke="#30364d" stroke-width="5"/>
+    <path d="M24 26h76M24 48h94M24 70h58" stroke="#8b94ad" stroke-width="7" stroke-linecap="round"/>
+    <circle cx="116" cy="78" r="12" fill="#77d4ae"/>
+  </g>
+  <g transform="translate(760 372) rotate(8)" filter="url(#shadow)">
+    <rect width="142" height="104" rx="16" fill="#fff" stroke="#30364d" stroke-width="5"/>
+    <path d="M24 26h76M24 48h94M24 70h58" stroke="#8b94ad" stroke-width="7" stroke-linecap="round"/>
+    <path d="M108 68v24M96 80h24" stroke="#6f78d8" stroke-width="7" stroke-linecap="round"/>
+  </g>
+
+  <!-- open lock: user-owned and inspectable -->
+  <g transform="translate(1020 175)" stroke="#30364d" stroke-width="6" stroke-linejoin="round">
+    <rect x="0" y="34" width="76" height="64" rx="17" fill="#ffd980"/>
+    <path d="M18 36V23C18-9 67-8 67 20" fill="none" stroke-linecap="round"/>
+    <circle cx="38" cy="64" r="8" fill="#30364d" stroke="none"/>
+    <path d="M38 70v12" stroke-linecap="round"/>
+  </g>
+
+  <!-- git branch motif -->
+  <g transform="translate(1010 530)" fill="none" stroke="#5964cb" stroke-width="6" stroke-linecap="round">
+    <path d="M0 0h68q34 0 34-34v-9M68 0q34 0 34 34v9"/>
+    <circle cx="0" cy="0" r="10" fill="#fff"/>
+    <circle cx="102" cy="-49" r="10" fill="#fff"/>
+    <circle cx="102" cy="49" r="10" fill="#fff"/>
+  </g>
+</svg>

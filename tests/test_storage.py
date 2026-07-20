@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -10,6 +11,15 @@ from wikibrain.storage import BrainStore
 
 
 class StorageTests(unittest.TestCase):
+    def test_connection_context_releases_the_database_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            store = BrainStore(Path(temporary) / "state.db")
+            with store.connect() as connection:
+                connection.execute("SELECT 1").fetchone()
+
+            with self.assertRaises(sqlite3.ProgrammingError):
+                connection.execute("SELECT 1").fetchone()
+
     def test_concurrent_wal_writers_do_not_lose_events(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             store = BrainStore(Path(temporary) / "state.db")

@@ -17,6 +17,21 @@ from .models import NormalizedEvent
 SCHEMA_VERSION = 3
 
 
+class ClosingConnection(sqlite3.Connection):
+    """Commit or roll back a context block, then release its file handle."""
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: Any,
+    ) -> bool:
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
+
 def utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds")
 
@@ -79,7 +94,11 @@ class BrainStore:
         self.initialize()
 
     def connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=1.0)
+        connection = sqlite3.connect(
+            self.path,
+            timeout=1.0,
+            factory=ClosingConnection,
+        )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA journal_mode = WAL")

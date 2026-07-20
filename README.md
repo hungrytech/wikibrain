@@ -33,9 +33,9 @@ brainctl init --workspace /path/to/project
 brainctl doctor
 ```
 
-The source repository and `v0.1.0` tag are public. The command above becomes
-available after `hungrytech/homebrew-tap` is published; the release-ready
-Formula generator is under `packaging/homebrew/`.
+The source repository, `v0.1.0` tag, and
+[`hungrytech/homebrew-tap`](https://github.com/hungrytech/homebrew-tap) are
+public. The release-ready Formula generator is under `packaging/homebrew/`.
 
 For local development:
 

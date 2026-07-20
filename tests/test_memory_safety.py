@@ -836,23 +836,92 @@ class MemorySafetyTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertFalse(home.exists())
 
-    def test_first_init_requires_an_explicit_workspace(self) -> None:
+    def test_first_init_defaults_workspace_to_user_home(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary) / "would-be-brain"
-            stderr = StringIO()
-            with redirect_stderr(stderr):
-                code = main(
-                    [
-                        "--home",
-                        str(home),
-                        "init",
-                        "--no-hooks",
-                        "--no-skills",
-                    ]
-                )
-            self.assertEqual(code, 1)
+            root = Path(temporary)
+            home = root / "would-be-brain"
+            user_home = root / "user-home"
+            user_home.mkdir()
+            output = StringIO()
+            with patch("wikibrain.cli.default_workspace", return_value=user_home):
+                with redirect_stdout(output):
+                    code = main(
+                        [
+                            "--home",
+                            str(home),
+                            "init",
+                            "--no-hooks",
+                            "--no-skills",
+                            "--json",
+                        ]
+                    )
+            self.assertEqual(code, 0)
+            config = BrainConfig.load(home)
+            self.assertEqual(config.workspace_roots, [str(user_home.resolve())])
+            self.assertIn(str(user_home.resolve()), output.getvalue())
+
+    def test_config_create_defaults_workspace_to_user_home(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            home = root / "brain"
+            user_home = root / "user-home"
+            user_home.mkdir()
+            with patch(
+                "wikibrain.config.default_workspace",
+                return_value=user_home,
+            ):
+                config = BrainConfig.create(home=home)
+            self.assertEqual(config.workspace_roots, [str(user_home.resolve())])
+
+    def test_explicit_workspace_overrides_default_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            home = root / "brain"
+            explicit = root / "explicit"
+            explicit.mkdir()
+            fallback = root / "fallback"
+            fallback.mkdir()
+            with patch("wikibrain.cli.default_workspace", return_value=fallback):
+                with redirect_stdout(StringIO()):
+                    code = main(
+                        [
+                            "--home",
+                            str(home),
+                            "init",
+                            "--workspace",
+                            str(explicit),
+                            "--no-hooks",
+                            "--no-skills",
+                            "--json",
+                        ]
+                    )
+            self.assertEqual(code, 0)
+            self.assertEqual(
+                BrainConfig.load(home).workspace_roots,
+                [str(explicit.resolve())],
+            )
+
+    def test_default_workspace_dry_run_creates_no_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            home = root / "would-be-brain"
+            user_home = root / "user-home"
+            user_home.mkdir()
+            with patch("wikibrain.cli.default_workspace", return_value=user_home):
+                with redirect_stdout(StringIO()):
+                    code = main(
+                        [
+                            "--home",
+                            str(home),
+                            "init",
+                            "--dry-run",
+                            "--no-hooks",
+                            "--no-skills",
+                            "--json",
+                        ]
+                    )
+            self.assertEqual(code, 0)
             self.assertFalse(home.exists())
-            self.assertIn("explicit --workspace PATH", stderr.getvalue())
 
     def test_doctor_reports_dirty_index_and_missing_hooks_as_degraded(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

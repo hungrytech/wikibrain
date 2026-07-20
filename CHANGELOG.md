@@ -4,6 +4,18 @@ All notable changes to WikiBrain are documented in this file.
 
 The project follows [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] - 2026-07-20
+
+### Changed
+
+- `brainctl init` now defaults the workspace allowlist to the current user's
+  home directory, so first-time setup no longer requires `--workspace`.
+- Git repositories inside the default root remain isolated recall scopes, and
+  WikiBrain continues to capture only agent lifecycle events rather than
+  scanning home-directory files.
+- Repeatable `--workspace PATH` options remain available when a narrower
+  allowlist is preferred.
+
 ## [0.1.0] - 2026-07-20
 
 ### Added

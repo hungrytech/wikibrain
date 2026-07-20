@@ -35,6 +35,11 @@ Codex hooks ───────┘       │
 Workspace identity is the nearest Git root inside an allowlisted root. This
 keeps two repositories isolated even when the allowlist is the user's home
 directory. Only a manual `brainctl remember --global` crosses that boundary.
+Zero-argument `brainctl init` uses the current user's home as that allowlisted
+root. This is a capture boundary, not a file crawler: WikiBrain receives only
+agent lifecycle payloads and never walks the home directory for content.
+Repeatable `--workspace` arguments replace the default when narrower roots are
+preferred.
 
 Hooks are fail-open. Invalid input, a busy database, a missing Wikimap command,
 or a timeout produces valid empty JSON and cannot block the coding agent.
@@ -67,10 +72,12 @@ instructions, `AGENTS.md`, `CLAUDE.md`, or skills is never automatic.
 
 ## Privacy
 
-Capture is limited to configured workspace roots and can be paused. Secrets are
-redacted before SQLite or Markdown writes, full tool results and shell commands
-are omitted (only file/workdir pointers remain), files are mode `0600`, and
-state directories are mode `0700`.
+Capture is limited to configured workspace roots and can be paused. The
+zero-configuration root is the user's home directory, while Git repositories
+inside it remain separate recall scopes. Secrets are redacted before SQLite or
+Markdown writes, full tool results and shell commands are omitted (only
+file/workdir pointers remain), files are mode `0600`, and state directories
+are mode `0700`.
 
 The archive is redacted plaintext; SQLite WAL is not encryption. Full-disk
 encryption is recommended until an optional Keychain-backed encryption layer is

@@ -29,11 +29,11 @@ The intended release path is:
 
 ```bash
 brew install hungrytech/tap/wikibrain
-brainctl init --workspace /path/to/project
+brainctl init
 brainctl doctor
 ```
 
-The source repository, `v0.1.0` tag, and
+The source repository, `v0.1.1` tag, and
 [`hungrytech/homebrew-tap`](https://github.com/hungrytech/homebrew-tap) are
 public. The release-ready Formula generator is under `packaging/homebrew/`.
 
@@ -42,14 +42,18 @@ For local development:
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e .
-.venv/bin/brainctl init --workspace /path/to/project
+.venv/bin/brainctl init
 ```
 
 `brainctl init` is the explicit consent boundary: Homebrew itself never edits
 Claude or Codex settings. The command backs up existing JSON, structurally
 merges WikiBrain-owned hook entries, and preserves unrelated hooks.
-At least one `--workspace` is required on first initialization so launching the
-command from `$HOME` cannot silently allowlist the entire home directory.
+On first initialization, the workspace allowlist defaults to the current
+user's home directory, so projects work without another path argument. Each
+Git repository remains an isolated memory scope, and WikiBrain does not scan
+the home directory; it only handles lifecycle events emitted by Claude Code
+and Codex. Use repeatable `--workspace PATH` options to replace the default
+with narrower roots.
 
 Codex requires one more trust step after hook installation: start a new
 session, open `/hooks`, review the exact definitions, and trust them.

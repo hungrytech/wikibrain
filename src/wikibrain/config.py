@@ -24,6 +24,11 @@ def default_home() -> Path:
     return (Path.home() / ".local" / "share" / "wikibrain").resolve()
 
 
+def default_workspace() -> Path:
+    """Return the zero-configuration capture root for the current user."""
+    return Path.home().expanduser().resolve()
+
+
 def ensure_private_directory(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
     try:
@@ -127,7 +132,7 @@ class BrainConfig:
     ) -> "BrainConfig":
         home = home.expanduser().resolve()
         vault = (vault or (home / "vault")).expanduser().resolve()
-        roots = workspace_roots or [Path.cwd()]
+        roots = workspace_roots or [default_workspace()]
         config = cls(
             version=CONFIG_VERSION,
             home=str(home),

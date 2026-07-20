@@ -6,17 +6,17 @@ setuptools build backend are fixed to official PyPI artifacts and SHA-256
 digests. The Formula disables networked build isolation after installing that
 pinned backend.
 
-## First public release
+## Release workflow
 
-1. Publish `hungrytech/wikibrain` and tag `v0.1.0`.
+1. Publish `hungrytech/wikibrain` and tag the release, for example `v0.1.1`.
 2. Download the GitHub-generated source archive and calculate its SHA-256.
 3. Render the Formula:
 
    ```bash
    python3 scripts/render_homebrew_formula.py \
      --owner hungrytech \
-     --version 0.1.0 \
-     --source-url https://github.com/hungrytech/wikibrain/archive/refs/tags/v0.1.0.tar.gz \
+     --version 0.1.1 \
+     --source-url https://github.com/hungrytech/wikibrain/archive/refs/tags/v0.1.1.tar.gz \
      --source-sha256 64_HEX_CHARACTERS
    ```
 
@@ -41,13 +41,14 @@ The user-facing flow becomes:
 
 ```bash
 brew install hungrytech/tap/wikibrain
-brainctl init --workspace /path/to/project
+brainctl init
 brainctl doctor
 ```
 
 Homebrew installation never edits `~/.claude` or `~/.codex`. `brainctl init`
-is the explicit, backed-up configuration step and requires at least one
-allowlisted workspace.
+is the explicit, backed-up configuration step. It defaults the workspace
+allowlist to the current user's home directory; pass repeatable
+`--workspace PATH` options to use narrower roots.
 
 ## Upgrade and uninstall
 

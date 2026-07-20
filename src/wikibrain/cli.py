@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .config import CONFIG_VERSION, BrainConfig, default_home
+from .config import CONFIG_VERSION, BrainConfig, default_home, default_workspace
 from .curation import Curator
 from .hooks import run_hook_command
 from .installer import (
@@ -89,12 +89,11 @@ def command_init(args: argparse.Namespace, home: Path) -> int:
         config = BrainConfig.load(home)
         created = False
     else:
-        if not args.workspace:
-            raise ValueError(
-                "first initialization requires at least one explicit "
-                "--workspace PATH"
-            )
-        workspaces = [Path(value) for value in args.workspace]
+        workspaces = (
+            [Path(value) for value in args.workspace]
+            if args.workspace
+            else [default_workspace()]
+        )
         if args.dry_run:
             selected_home = home.expanduser().resolve()
             selected_vault = (
@@ -634,7 +633,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     init = commands.add_parser("init", help="Initialize the brain and install hooks")
     init.add_argument("--vault")
-    init.add_argument("--workspace", action="append", default=[])
+    init.add_argument(
+        "--workspace",
+        action="append",
+        default=[],
+        help=(
+            "Allowlist a workspace root (repeatable); defaults to the current "
+            "user's home directory on first initialization"
+        ),
+    )
     init.add_argument("--clients", type=_clients, default=["claude", "codex"])
     init.add_argument("--no-hooks", action="store_true")
     init.add_argument("--no-skills", action="store_true")

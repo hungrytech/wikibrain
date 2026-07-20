@@ -1,5 +1,13 @@
 # WikiBrain command reference
 
+## Setup
+
+- `brainctl init`: initialize the private brain, use the current user's home
+  as the default workspace root, and install Claude Code and Codex hooks.
+- `brainctl init --workspace PATH`: initialize with a narrower explicit root;
+  repeat the option to allowlist multiple roots.
+- `brainctl doctor`: verify storage, Wikimap, and hook integration.
+
 ## Normal use
 
 - `brainctl recall [QUERY]`: search Wikimap and recent handoffs.
@@ -7,7 +15,6 @@
 - `brainctl remember --global TEXT`: intentionally create a cross-project
   memory.
 - `brainctl status`: inspect capture state, storage counts, Wikimap, and hooks.
-- `brainctl doctor`: verify storage and external integration.
 - `brainctl retention [--days N]`: preview expired session/handoff evidence.
 
 ## Capture controls

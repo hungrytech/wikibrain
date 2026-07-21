@@ -121,7 +121,7 @@ trust-boundary details.
 ## Verified benchmark
 
 <p align="center">
-  <img src="docs/assets/benchmark-second-brain-v1.svg" width="920" alt="WikiBrain benchmark: 8 of 8 functional checks passed; recall latency was 24.31 milliseconds p50 and 26.76 milliseconds p95 across 80 samples">
+  <img src="docs/assets/benchmark-second-brain-v1.svg" width="920" alt="WikiBrain benchmark: 8 of 8 functional checks passed; recall latency was 24.31 milliseconds p50 and 28.14 milliseconds p95 across 80 samples">
 </p>
 
 The fixed-corpus benchmark disables recent-item fallback for query-based
@@ -133,7 +133,7 @@ evidence and excludes forbidden stale, secret, or cross-workspace content.
 | --- | ---: |
 | Functional checks | **8/8 passed** |
 | Recall samples | **80** (4 queries × 20 iterations) |
-| Latency | **24.31 ms p50 · 26.76 ms p95** |
+| Latency | **24.31 ms p50 · 28.14 ms p95** |
 | Environment | macOS arm64 · Python 3.13.11 · Wikimap 1.1.0 |
 
 <details>

@@ -1,6 +1,10 @@
 {
   "benchmark": "second-brain-v1",
-  "retrieval_mode": "query-only",
+  "retrieval_mode": "mixed-contract",
+  "retrieval_modes": {
+    "query_checks": "query-only-no-recent-fallback",
+    "handoff_check": "session-start-recent-context"
+  },
   "engine": "wikimap 1.1.0",
   "python": "3.13.11",
   "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
@@ -10,17 +14,17 @@
   "score_percent": 100.0,
   "latency_ms": {
     "samples": 80,
-    "p50": 24.29,
-    "p95": 26.88
+    "p50": 24.31,
+    "p95": 28.14
   },
   "provenance": {
-    "generated_at": "2026-07-21T02:21:05+00:00",
+    "generated_at": "2026-07-21T03:23:35+00:00",
     "corpus_version": "second-brain-corpus-v1",
     "latency_iterations": 20,
     "latency_queries": 4,
-    "runner_sha256": "9f890ccc3f1e98111fca2eff50d63c1d2ab68819dcdefebc2aae737cbedbb47c",
-    "source_manifest_sha256": "f14b826b3ef066b6bfbc50b6a986a8c85cabe6ea7defa999a39641ec28485ea6",
-    "git_commit": "cb203722015fc2ff02c3501296b048721a51c8b6",
+    "runner_sha256": "4cf693527eaca3580b86711bcd54411000712ff3fcf7ab4d35d87c10298f0dea",
+    "source_manifest_sha256": "90e6b461616f5404b000fd5adb0a7ba119634ac18dfe74b0ec2bbce690752399",
+    "git_commit": "9813c00cc6e34b9eacfa5e2f06f8fa6021c8eebb",
     "git_dirty": false,
     "reproduction_command": "uv run python -m benchmarks.second_brain --wikimap wikimap --iterations 20 --format json --output benchmarks/results/second-brain-v1.json"
   },

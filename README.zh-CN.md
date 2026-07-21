@@ -114,7 +114,7 @@ Codex hooks ───────┘            ├─ Markdown vault: durable r
 ## 经验证的基准测试
 
 <p align="center">
-  <img src="docs/assets/benchmark-second-brain-v1.svg" width="920" alt="WikiBrain 基准测试：8 项功能检查中 8 项全部通过；在 80 个样本中，检索延迟为 p50 24.31 毫秒、p95 26.76 毫秒">
+  <img src="docs/assets/benchmark-second-brain-v1.svg" width="920" alt="WikiBrain 基准测试：8 项功能检查中 8 项全部通过；在 80 个样本中，检索延迟为 p50 24.31 毫秒、p95 28.14 毫秒">
 </p>
 
 固定语料库基准测试的查询检索检查会禁用近期条目回退。另一项交接检查
@@ -125,7 +125,7 @@ Codex hooks ───────┘            ├─ Markdown vault: durable r
 | --- | ---: |
 | 功能检查 | **8/8 通过** |
 | 检索样本 | **80**（4 个查询 × 20 次迭代） |
-| 延迟 | **24.31 ms p50 · 26.76 ms p95** |
+| 延迟 | **24.31 ms p50 · 28.14 ms p95** |
 | 环境 | macOS arm64 · Python 3.13.11 · Wikimap 1.1.0 |
 
 <details>

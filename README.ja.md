@@ -104,7 +104,7 @@ Codex hooks ───────┘            ├─ Markdown vault: durable r
 ## 検証済みベンチマーク
 
 <p align="center">
-  <img src="docs/assets/benchmark-second-brain-v1.svg" width="920" alt="WikiBrain ベンチマーク：8 件中 8 件の機能チェックに合格。80 サンプルにおける呼び出しレイテンシは p50 が 24.31 ミリ秒、p95 が 26.76 ミリ秒">
+  <img src="docs/assets/benchmark-second-brain-v1.svg" width="920" alt="WikiBrain ベンチマーク：8 件中 8 件の機能チェックに合格。80 サンプルにおける呼び出しレイテンシは p50 が 24.31 ミリ秒、p95 が 28.14 ミリ秒">
 </p>
 
 固定コーパスベンチマークのクエリ検索チェックでは、最近の項目へのフォールバックを無効にします。別の引き継ぎチェックでは、`SessionStart` による最近のコンテキスト復元を検証します。クエリ検索チェックは、期待される証拠を返し、禁止された古い内容、機密情報、または別ワークスペースの内容を除外した場合にのみ合格します。
@@ -113,7 +113,7 @@ Codex hooks ───────┘            ├─ Markdown vault: durable r
 | --- | ---: |
 | 機能チェック | **8/8 passed** |
 | 呼び出しサンプル | **80** (4 queries × 20 iterations) |
-| レイテンシ | **24.31 ms p50 · 26.76 ms p95** |
+| レイテンシ | **24.31 ms p50 · 28.14 ms p95** |
 | 環境 | macOS arm64 · Python 3.13.11 · Wikimap 1.1.0 |
 
 <details>

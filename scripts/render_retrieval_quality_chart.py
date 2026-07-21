@@ -25,7 +25,7 @@ def render_svg(result: dict[str, Any]) -> str:
         ("Context Precision", float(context_quality["context_precision"])),
         ("Context F1", float(context_quality["context_f1"])),
         ("Required facts", float(context_quality["required_atom_recall"])),
-        ("Retrieval Recall@3", float(quality["recall_at_3"])),
+        ("Retrieval Recall@3 · diagnostic", float(quality["recall_at_3"])),
     ]
     fingerprint = hashlib.sha256(
         json.dumps(result, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -42,11 +42,12 @@ def render_svg(result: dict[str, Any]) -> str:
     for index, (name, value) in enumerate(metrics):
         y = 148 + index * 46
         width = max(0.0, min(1.0, value)) * 560
+        bar_class = "diagnostic-bar" if "diagnostic" in name else "bar"
         rows.extend(
             [
                 f'<text x="48" y="{y + 17}" class="label">{html.escape(name)}</text>',
                 f'<rect x="250" y="{y}" width="560" height="24" rx="6" class="track"/>',
-                f'<rect x="250" y="{y}" width="{width:.2f}" height="24" rx="6" class="bar"/>',
+                f'<rect x="250" y="{y}" width="{width:.2f}" height="24" rx="6" class="{bar_class}"/>',
                 f'<text x="830" y="{y + 17}" class="value">{_percent(value)}</text>',
             ]
         )
@@ -73,6 +74,7 @@ def render_svg(result: dict[str, Any]) -> str:
   .value {{ fill: #f0f6fc; font: 700 14px ui-monospace,SFMono-Regular,Consolas,monospace; }}
   .track {{ fill: #30363d; }}
   .bar {{ fill: #58a6ff; }}
+  .diagnostic-bar {{ fill: #6e7681; }}
   .card-value {{ fill: #3fb950; font: 700 21px ui-monospace,SFMono-Regular,Consolas,monospace; }}
   .card-label {{ fill: #8b949e; font: 12px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }}
   .footer {{ fill: #6e7681; font: 11px ui-monospace,SFMono-Regular,Consolas,monospace; }}

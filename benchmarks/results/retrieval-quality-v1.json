@@ -23,6 +23,15 @@
     "forbidden_query_rate": 0.0,
     "violations": {}
   },
+  "context_quality": {
+    "query_count": 12,
+    "context_recall": 0.875,
+    "context_precision": 0.7916666666666666,
+    "context_f1": 0.8055555555555555,
+    "required_atom_recall": 0.9090909090909091,
+    "forbidden_query_rate": 0.0,
+    "violations": {}
+  },
   "query_engines": {
     "wikimap": 12
   },
@@ -30,6 +39,9 @@
     {
       "query_id": "exact-change-ticket",
       "engine": "wikimap",
+      "context_records": [
+        "atlas-deploy"
+      ],
       "retrieved": [
         {
           "rank": 1,
@@ -40,6 +52,9 @@
     {
       "query_id": "deployment-location-paraphrase",
       "engine": "wikimap",
+      "context_records": [
+        "atlas-slo"
+      ],
       "retrieved": [
         {
           "rank": 1,
@@ -50,6 +65,9 @@
     {
       "query_id": "release-owner",
       "engine": "wikimap",
+      "context_records": [
+        "atlas-release-evidence"
+      ],
       "retrieved": [
         {
           "rank": 1,
@@ -60,6 +78,9 @@
     {
       "query_id": "backup-reviewer",
       "engine": "wikimap",
+      "context_records": [
+        "atlas-release-owner"
+      ],
       "retrieved": [
         {
           "rank": 1,
@@ -70,6 +91,10 @@
     {
       "query_id": "backup-retention",
       "engine": "wikimap",
+      "context_records": [
+        "atlas-database-backup",
+        "atlas-restart-runbook"
+      ],
       "retrieved": [
         {
           "rank": 1,
@@ -84,6 +109,10 @@
     {
       "query_id": "retry-policy",
       "engine": "wikimap",
+      "context_records": [
+        "atlas-api-resilience",
+        "global-timezone"
+      ],
       "retrieved": [
         {
           "rank": 1,
@@ -98,6 +127,10 @@
     {
       "query_id": "latency-objective",
       "engine": "wikimap",
+      "context_records": [
+        "global-timezone",
+        "atlas-slo"
+      ],
       "retrieved": [
         {
           "rank": 1,
@@ -112,6 +145,10 @@
     {
       "query_id": "recovery-order",
       "engine": "wikimap",
+      "context_records": [
+        "atlas-restart-runbook",
+        "atlas-release-evidence"
+      ],
       "retrieved": [
         {
           "rank": 1,
@@ -126,6 +163,9 @@
     {
       "query_id": "current-package-manager",
       "engine": "wikimap",
+      "context_records": [
+        "atlas-package-current"
+      ],
       "retrieved": [
         {
           "rank": 1,
@@ -136,6 +176,9 @@
     {
       "query_id": "status-style",
       "engine": "wikimap",
+      "context_records": [
+        "global-report-style"
+      ],
       "retrieved": [
         {
           "rank": 1,
@@ -146,6 +189,9 @@
     {
       "query_id": "default-timezone",
       "engine": "wikimap",
+      "context_records": [
+        "global-timezone"
+      ],
       "retrieved": [
         {
           "rank": 1,
@@ -156,6 +202,11 @@
     {
       "query_id": "release-readiness-multi",
       "engine": "wikimap",
+      "context_records": [
+        "atlas-release-owner",
+        "atlas-release-evidence",
+        "atlas-restart-runbook"
+      ],
       "retrieved": [
         {
           "rank": 1,
@@ -173,16 +224,16 @@
     }
   ],
   "wikimap_version": "wikimap 1.1.0",
-  "generated_at": "2026-07-21T04:58:56.198539+00:00",
+  "generated_at": "2026-07-21T05:56:33.607816+00:00",
   "environment": {
     "machine": "arm64",
     "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
     "python": "3.13.11"
   },
   "provenance": {
-    "corpus_sha256": "74f51686d2b63298688dd87d5e083789a40613800a8428df6446f767f1c42e41",
-    "source_manifest_sha256": "4335c09ba336f9d50d83272e2d080f594240c367486d6009d7204cfc08c29964",
-    "git_commit": "c4c5e64328ef78b65fafd3e0eb7b8230644c3995",
+    "corpus_sha256": "adc729bcb6a8a8027d11176601046eaeef022bde135c7f225f8e40b78f7a998c",
+    "source_manifest_sha256": "1f19ef9481142a9371d91cca383d29ec6b2b9ca22ebff35a28a16db7684dde40",
+    "git_commit": "9802b3814758e20865d5c821c493eb3a7e272e4f",
     "git_dirty": false
   }
 }

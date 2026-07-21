@@ -212,7 +212,20 @@ Apple Silicon macOS、Intel macOS 和 x86_64 Linux。
 
 ### 原生 Windows
 
-打开 PowerShell，下载指定版本的安装程序，审查后再运行：
+最简单的方法是把官方仓库链接交给 AI 编程助手，请它完成安装并进行验证。将以下提示原样粘贴到能够在你的 Windows 电脑上执行命令的 Claude Code、Codex 或其他智能体中：
+
+```text
+Install WikiBrain on this Windows machine from https://github.com/hungrytech/wikibrain.
+Read the repository's Native Windows instructions first. Before changing anything,
+tell me whether native Windows or WSL is the correct path for where my agents and
+repositories run. Use the version-pinned installer from the README. Download it,
+show me the full PowerShell script, explain the settings changed by initialization,
+then stop and wait for my explicit approval before running the script or initializing
+WikiBrain. After I approve, install it and finish by running brainctl doctor.
+Do not bypass Codex hook trust.
+```
+
+确认 AI 给出的计划和所有权限请求后再继续。如果你希望手动安装，请打开 PowerShell，下载指定版本的安装程序，审查后再运行：
 
 ```powershell
 $installer = Join-Path $env:TEMP "install-wikibrain.ps1"

@@ -194,7 +194,20 @@ uv run --locked python -m benchmarks.retrieval_quality \
 
 ### ネイティブ Windows
 
-PowerShell を開き、バージョンが固定されたインストーラーをダウンロードして内容を確認した後、実行します：
+最も簡単な方法は、AI コーディングアシスタントに公式リポジトリのリンクを渡し、インストールと検証を依頼することです。Windows PC でコマンドを実行できる Claude Code、Codex などのエージェントに、次のプロンプトをそのまま貼り付けてください：
+
+```text
+Install WikiBrain on this Windows machine from https://github.com/hungrytech/wikibrain.
+Read the repository's Native Windows instructions first. Before changing anything,
+tell me whether native Windows or WSL is the correct path for where my agents and
+repositories run. Use the version-pinned installer from the README. Download it,
+show me the full PowerShell script, explain the settings changed by initialization,
+then stop and wait for my explicit approval before running the script or initializing
+WikiBrain. After I approve, install it and finish by running brainctl doctor.
+Do not bypass Codex hook trust.
+```
+
+AI が提示した計画と権限要求を確認してから進めてください。手動でインストールする場合は、PowerShell を開き、バージョンが固定されたインストーラーをダウンロードして内容を確認した後、実行します：
 
 ```powershell
 $installer = Join-Path $env:TEMP "install-wikibrain.ps1"

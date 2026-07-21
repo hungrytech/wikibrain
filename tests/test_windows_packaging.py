@@ -26,6 +26,38 @@ class WindowsPackagingTests(unittest.TestCase):
         self.assertIn(expected_path, english)
         self.assertIn(expected_path, korean)
 
+    def test_all_readmes_offer_a_safe_ai_assisted_windows_install_prompt(self) -> None:
+        prompt = """Install WikiBrain on this Windows machine from https://github.com/hungrytech/wikibrain.
+Read the repository's Native Windows instructions first. Before changing anything,
+tell me whether native Windows or WSL is the correct path for where my agents and
+repositories run. Use the version-pinned installer from the README. Download it,
+show me the full PowerShell script, explain the settings changed by initialization,
+then stop and wait for my explicit approval before running the script or initializing
+WikiBrain. After I approve, install it and finish by running brainctl doctor.
+Do not bypass Codex hook trust."""
+        fenced_prompt = f"```text\n{prompt}\n```"
+        pinned_installer = (
+            f"/wikibrain/v{__version__}/scripts/install-windows.ps1"
+        )
+
+        for readme_name in (
+            "README.md",
+            "README.ko.md",
+            "README.ja.md",
+            "README.zh-CN.md",
+        ):
+            readme = (ROOT / readme_name).read_text(encoding="utf-8")
+            native_start = readme.index('<a id="native-windows"></a>')
+            native_end = readme.index("<details>", native_start)
+            native_section = readme[native_start:native_end]
+            with self.subTest(readme=readme_name):
+                self.assertIn(fenced_prompt, native_section)
+                self.assertIn(pinned_installer, native_section)
+                self.assertLess(
+                    native_section.index(fenced_prompt),
+                    native_section.index("```powershell"),
+                )
+
     def test_windows_installer_is_review_first_and_does_not_use_iex(self) -> None:
         installer = (ROOT / "scripts" / "install-windows.ps1").read_text(
             encoding="utf-8"

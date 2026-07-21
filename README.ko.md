@@ -228,7 +228,23 @@ Intel macOS, x86_64 Linux용 bottle을 제공합니다.
 
 ### 네이티브 Windows
 
-PowerShell에서 버전이 고정된 설치 스크립트를 내려받아 검토한 뒤 실행합니다.
+가장 쉬운 방법은 AI 코딩 도구에 공식 저장소 링크를 주고 설치와 검증을 요청하는
+것입니다. Windows PC에서 명령을 실행할 수 있는 Claude Code, Codex 등의
+에이전트에 아래 내용을 그대로 붙여 넣으세요.
+
+```text
+Install WikiBrain on this Windows machine from https://github.com/hungrytech/wikibrain.
+Read the repository's Native Windows instructions first. Before changing anything,
+tell me whether native Windows or WSL is the correct path for where my agents and
+repositories run. Use the version-pinned installer from the README. Download it,
+show me the full PowerShell script, explain the settings changed by initialization,
+then stop and wait for my explicit approval before running the script or initializing
+WikiBrain. After I approve, install it and finish by running brainctl doctor.
+Do not bypass Codex hook trust.
+```
+
+AI가 제시한 계획과 권한 요청을 확인한 뒤 진행하세요. 직접 설치하려면 PowerShell에서
+버전이 고정된 설치 스크립트를 내려받아 검토한 뒤 실행합니다.
 
 ```powershell
 $installer = Join-Path $env:TEMP "install-wikibrain.ps1"

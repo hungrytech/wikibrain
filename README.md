@@ -236,7 +236,23 @@ cover Apple Silicon macOS, Intel macOS, and x86_64 Linux.
 
 ### Native Windows
 
-Open PowerShell, download the versioned installer, review it, then run it:
+The easiest route is to give your AI coding assistant the official repository
+link and ask it to perform and verify the installation. Paste this prompt into
+Claude Code, Codex, or another agent that can run commands on your Windows PC:
+
+```text
+Install WikiBrain on this Windows machine from https://github.com/hungrytech/wikibrain.
+Read the repository's Native Windows instructions first. Before changing anything,
+tell me whether native Windows or WSL is the correct path for where my agents and
+repositories run. Use the version-pinned installer from the README. Download it,
+show me the full PowerShell script, explain the settings changed by initialization,
+then stop and wait for my explicit approval before running the script or initializing
+WikiBrain. After I approve, install it and finish by running brainctl doctor.
+Do not bypass Codex hook trust.
+```
+
+Review the AI's plan and every permission prompt. If you prefer to install it
+manually, open PowerShell, download the versioned installer, review it, then run it:
 
 ```powershell
 $installer = Join-Path $env:TEMP "install-wikibrain.ps1"

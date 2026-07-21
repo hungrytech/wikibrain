@@ -136,6 +136,30 @@ evidence and excludes forbidden stale, secret, or cross-workspace content.
 | Latency | **24.31 ms p50 · 28.14 ms p95** |
 | Environment | macOS arm64 · Python 3.13.11 · Wikimap 1.1.0 |
 
+### Retrieval quality and ingestion integrity
+
+<p align="center">
+  <img src="docs/assets/benchmark-retrieval-quality-v1.svg" width="920" alt="WikiBrain retrieval quality benchmark: Recall at 1 69.44 percent, Recall at 3 87.50 percent, nDCG at 3 81.35 percent, MRR 87.50 percent, Top-1 source match 83.33 percent; 14 of 14 documents accepted and zero forbidden-query exposure">
+</p>
+
+A separate labeled corpus measures ranked retrieval rather than latency. It ingests
+14 synthetic documents, deletes one after indexing, then runs 12 exact,
+paraphrased, multi-relevance, global-preference, and workspace-scoped queries.
+
+| Quality result | Value |
+| --- | ---: |
+| Ingestion acceptance | **14/14 · 100.00%** |
+| Stored content presence | **100.00%** |
+| Recall@1 / Recall@3 | **69.44% / 87.50%** |
+| MRR / nDCG@3 | **87.50% / 81.35%** |
+| Top-1 source match | **83.33%** |
+| Forbidden exposure | **0/12 queries · 0.00%** |
+
+`forbidden` labels cover another workspace, a superseded decision, and a deleted
+memory. The non-perfect retrieval scores are intentional: this suite exposes
+paraphrase and ranking weaknesses instead of converting 8/8 functional checks
+into an accuracy claim.
+
 <details>
 <summary><strong>What the eight checks cover</strong></summary>
 
@@ -160,17 +184,40 @@ uv run --locked python -m benchmarks.second_brain \
   --format json \
   --output benchmarks/results/second-brain-v1.json
 uv run --locked python scripts/render_benchmark_chart.py
+
+uv run --locked python -m benchmarks.retrieval_quality \
+  --corpus benchmarks/corpora/retrieval-quality-v1.json \
+  --output benchmarks/results/retrieval-quality-v1.json
+uv run --locked python scripts/render_retrieval_quality_chart.py
 ```
 
-The machine-readable result is
-[`benchmarks/results/second-brain-v1.json`](benchmarks/results/second-brain-v1.json).
-The chart is generated from that file; CI rejects a stale SVG. Latency varies by
-machine and run and is not a stable performance guarantee.
+Machine-readable results are
+[`second-brain-v1.json`](benchmarks/results/second-brain-v1.json) and
+[`retrieval-quality-v1.json`](benchmarks/results/retrieval-quality-v1.json).
+Both charts are generated from their JSON files; CI rejects stale SVGs. Latency
+varies by machine and run and is not a stable performance guarantee.
 
-> **Scope:** 100% means only that this small synthetic regression corpus passed.
-> It does not measure noisy long-lived vaults, semantic paraphrases, OCR or
-> document ingestion, concurrent writers, answer faithfulness, or multi-hop
-> graph reasoning.
+To measure your own stored data, copy the
+[labeled corpus](benchmarks/corpora/retrieval-quality-v1.json) outside the
+repository, replace its synthetic documents and relevance labels, and keep the
+result local:
+
+```bash
+cp benchmarks/corpora/retrieval-quality-v1.json /tmp/my-brain-quality.json
+# Edit /tmp/my-brain-quality.json: documents, queries, relevant, and forbidden.
+uv run --locked python -m benchmarks.retrieval_quality \
+  --corpus /tmp/my-brain-quality.json \
+  --output /tmp/my-brain-quality-result.json
+```
+
+The result omits document text and query text, but IDs can still be sensitive;
+do not commit a personal corpus or result.
+
+> **Scope:** These are small synthetic regression corpora, not a guarantee for a
+> personal vault. They do not measure OCR extraction, concurrent writers,
+> answer faithfulness after an LLM consumes the retrieved context, or multi-hop
+> graph reasoning. A personal labeled corpus is required to claim accuracy on
+> your own data.
 
 <a id="installation-and-trust"></a>
 

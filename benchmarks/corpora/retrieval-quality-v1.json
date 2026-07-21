@@ -1,0 +1,236 @@
+{
+  "corpus_version": "retrieval-quality-corpus-v1",
+  "description": "Synthetic local-only second-brain corpus with paraphrases, graded relevance, workspace distractors, superseded decisions, and a deleted draft.",
+  "documents": [
+    {
+      "id": "atlas-deploy",
+      "workspace": "atlas",
+      "title": "Atlas production deployment",
+      "text": "Project Atlas production deployment runs in AWS region ap-northeast-2. The release command is uv run deploy --region ap-northeast-2. Change ticket Atlas-431 records the migration.",
+      "captured_at": "2026-06-01T09:00:00+00:00"
+    },
+    {
+      "id": "atlas-release-owner",
+      "workspace": "atlas",
+      "title": "Atlas release ownership",
+      "text": "Mina owns the Project Atlas release checklist and production readiness review. Joon is the backup reviewer when Mina is unavailable.",
+      "captured_at": "2026-06-02T09:00:00+00:00"
+    },
+    {
+      "id": "atlas-database-backup",
+      "workspace": "atlas",
+      "title": "Atlas database backup policy",
+      "text": "Project Atlas PostgreSQL backups are retained for 14 days. Automated snapshots begin daily at 02:30 UTC and restore drills run each quarter.",
+      "captured_at": "2026-06-03T09:00:00+00:00"
+    },
+    {
+      "id": "atlas-api-resilience",
+      "workspace": "atlas",
+      "title": "Atlas API resilience policy",
+      "text": "The Atlas public API client allows three total attempts. Retry delays are 200 milliseconds and then 800 milliseconds. Do not retry validation errors.",
+      "captured_at": "2026-06-04T09:00:00+00:00"
+    },
+    {
+      "id": "atlas-slo",
+      "workspace": "atlas",
+      "title": "Atlas service objectives",
+      "text": "Project Atlas targets 99.9 percent monthly availability. The production request latency objective keeps p95 below 350 milliseconds.",
+      "captured_at": "2026-06-05T09:00:00+00:00"
+    },
+    {
+      "id": "atlas-restart-runbook",
+      "workspace": "atlas",
+      "title": "Atlas restart runbook",
+      "text": "For an Atlas recovery, restart the gateway first, wait for health checks, and restart workers second. This order is part of release readiness.",
+      "captured_at": "2026-06-06T09:00:00+00:00"
+    },
+    {
+      "id": "atlas-package-old",
+      "workspace": "atlas",
+      "title": "Old Atlas package manager decision",
+      "text": "Project Atlas package manager decision: use pip and requirements.txt for all developer commands.",
+      "captured_at": "2026-06-07T09:00:00+00:00"
+    },
+    {
+      "id": "atlas-package-current",
+      "workspace": "atlas",
+      "title": "Current Atlas package manager decision",
+      "text": "Project Atlas package manager decision: use uv with uv.lock. This replaces the former pip and requirements.txt workflow.",
+      "captured_at": "2026-07-01T09:00:00+00:00",
+      "supersedes": [
+        "atlas-package-old"
+      ]
+    },
+    {
+      "id": "atlas-deleted-draft",
+      "workspace": "atlas",
+      "title": "Deleted Atlas region draft",
+      "text": "Draft only: move Project Atlas production deployment to us-east-1 under change ticket Atlas-431. This proposal was withdrawn.",
+      "captured_at": "2026-07-02T09:00:00+00:00",
+      "delete_after_ingest": true
+    },
+    {
+      "id": "borealis-deploy",
+      "workspace": "borealis",
+      "title": "Borealis production deployment",
+      "text": "Project Borealis production deployment runs in AWS region eu-west-1. Its migration ticket is Borealis-882.",
+      "captured_at": "2026-06-08T09:00:00+00:00"
+    },
+    {
+      "id": "borealis-release-owner",
+      "workspace": "borealis",
+      "title": "Borealis release ownership",
+      "text": "Mina audits the Borealis release checklist, but Pavel owns its production readiness decision.",
+      "captured_at": "2026-06-09T09:00:00+00:00"
+    },
+    {
+      "id": "global-report-style",
+      "workspace": null,
+      "title": "Status report preference",
+      "text": "I prefer concise Korean status reports that end with concrete next actions.",
+      "captured_at": "2026-06-10T09:00:00+00:00"
+    },
+    {
+      "id": "global-timezone",
+      "workspace": null,
+      "title": "Scheduling timezone preference",
+      "text": "Use Asia/Seoul as my default timezone for schedules and date interpretation.",
+      "captured_at": "2026-06-11T09:00:00+00:00"
+    },
+    {
+      "id": "atlas-release-evidence",
+      "workspace": "atlas",
+      "title": "Atlas release evidence",
+      "text": "Atlas production readiness requires the release checklist, a successful restore drill, and healthy gateway checks before workers restart.",
+      "captured_at": "2026-06-12T09:00:00+00:00"
+    }
+  ],
+  "queries": [
+    {
+      "id": "exact-change-ticket",
+      "workspace": "atlas",
+      "text": "What does Atlas-431 change?",
+      "relevant": {
+        "atlas-deploy": 3
+      },
+      "forbidden": {
+        "atlas-deleted-draft": "deleted",
+        "borealis-deploy": "workspace"
+      }
+    },
+    {
+      "id": "deployment-location-paraphrase",
+      "workspace": "atlas",
+      "text": "Where is the live Atlas service hosted?",
+      "relevant": {
+        "atlas-deploy": 3
+      },
+      "forbidden": {
+        "atlas-deleted-draft": "deleted",
+        "borealis-deploy": "workspace"
+      }
+    },
+    {
+      "id": "release-owner",
+      "workspace": "atlas",
+      "text": "Who is responsible for Atlas production readiness?",
+      "relevant": {
+        "atlas-release-owner": 3,
+        "atlas-release-evidence": 1
+      },
+      "forbidden": {
+        "borealis-release-owner": "workspace"
+      }
+    },
+    {
+      "id": "backup-reviewer",
+      "workspace": "atlas",
+      "text": "Who covers the release review when the primary owner is away?",
+      "relevant": {
+        "atlas-release-owner": 3
+      },
+      "forbidden": {
+        "borealis-release-owner": "workspace"
+      }
+    },
+    {
+      "id": "backup-retention",
+      "workspace": "atlas",
+      "text": "How long can we recover the Atlas database from stored backups?",
+      "relevant": {
+        "atlas-database-backup": 3
+      },
+      "forbidden": {}
+    },
+    {
+      "id": "retry-policy",
+      "workspace": "atlas",
+      "text": "What retry schedule should the public client follow?",
+      "relevant": {
+        "atlas-api-resilience": 3
+      },
+      "forbidden": {}
+    },
+    {
+      "id": "latency-objective",
+      "workspace": "atlas",
+      "text": "What is our p95 response-time target?",
+      "relevant": {
+        "atlas-slo": 3
+      },
+      "forbidden": {}
+    },
+    {
+      "id": "recovery-order",
+      "workspace": "atlas",
+      "text": "During recovery, which component starts before the workers?",
+      "relevant": {
+        "atlas-restart-runbook": 3,
+        "atlas-release-evidence": 1
+      },
+      "forbidden": {}
+    },
+    {
+      "id": "current-package-manager",
+      "workspace": "atlas",
+      "text": "What is the current Atlas dependency workflow?",
+      "relevant": {
+        "atlas-package-current": 3
+      },
+      "forbidden": {
+        "atlas-package-old": "superseded"
+      }
+    },
+    {
+      "id": "status-style",
+      "workspace": "atlas",
+      "text": "How should you format status updates for me?",
+      "relevant": {
+        "global-report-style": 3
+      },
+      "forbidden": {}
+    },
+    {
+      "id": "default-timezone",
+      "workspace": "atlas",
+      "text": "Which timezone should scheduling use by default?",
+      "relevant": {
+        "global-timezone": 3
+      },
+      "forbidden": {}
+    },
+    {
+      "id": "release-readiness-multi",
+      "workspace": "atlas",
+      "text": "Find the Atlas release readiness material.",
+      "relevant": {
+        "atlas-release-owner": 3,
+        "atlas-release-evidence": 3,
+        "atlas-restart-runbook": 1
+      },
+      "forbidden": {
+        "borealis-release-owner": "workspace"
+      }
+    }
+  ]
+}

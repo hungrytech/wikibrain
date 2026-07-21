@@ -128,6 +128,29 @@ Codex hooks ───────┘            ├─ Markdown vault: durable r
 | 延迟 | **24.31 ms p50 · 28.14 ms p95** |
 | 环境 | macOS arm64 · Python 3.13.11 · Wikimap 1.1.0 |
 
+### 检索质量与摄取完整性
+
+<p align="center">
+  <img src="docs/assets/benchmark-retrieval-quality-v1.svg" width="920" alt="WikiBrain 检索质量基准：Recall@1 为 69.44%，Recall@3 为 87.50%，nDCG@3 为 81.35%，MRR 为 87.50%，Top-1 来源匹配率为 83.33%；14 份文档全部摄取，禁止文档暴露率为 0%">
+</p>
+
+除了延迟之外，另一个带有真值标签的语料库用于衡量检索排序。它摄取 14 份
+合成文档，在建立索引后删除其中 1 份，然后运行 12 个包含精确表达、语义改写、
+多相关项、全局偏好和工作区范围的查询。
+
+| 质量结果 | 数值 |
+| --- | ---: |
+| 摄取接受率 | **14/14 · 100.00%** |
+| 存储内容存在率 | **100.00%** |
+| Recall@1 / Recall@3 | **69.44% / 87.50%** |
+| MRR / nDCG@3 | **87.50% / 81.35%** |
+| Top-1 来源匹配率 | **83.33%** |
+| 禁止文档暴露 | **0/12 个查询 · 0.00%** |
+
+`forbidden` 标签覆盖其他工作区、已被取代的决策和已删除的记忆。非满分的检索
+结果是刻意保留的：该套件用于暴露语义改写和排序弱点，而不会把 8/8 的功能
+检查夸大为检索准确率。
+
 <details>
 <summary><strong>八项检查涵盖的内容</strong></summary>
 
@@ -152,16 +175,36 @@ uv run --locked python -m benchmarks.second_brain \
   --format json \
   --output benchmarks/results/second-brain-v1.json
 uv run --locked python scripts/render_benchmark_chart.py
+
+uv run --locked python -m benchmarks.retrieval_quality \
+  --corpus benchmarks/corpora/retrieval-quality-v1.json \
+  --output benchmarks/results/retrieval-quality-v1.json
+uv run --locked python scripts/render_retrieval_quality_chart.py
 ```
 
 机器可读的结果位于
-[`benchmarks/results/second-brain-v1.json`](benchmarks/results/second-brain-v1.json)。
-图表由该文件生成；如果 SVG 已过时，CI 会拒绝它。延迟会因机器和运行而异，
+[`second-brain-v1.json`](benchmarks/results/second-brain-v1.json) 和
+[`retrieval-quality-v1.json`](benchmarks/results/retrieval-quality-v1.json)。
+两张图表都由相应的 JSON 生成；过时的 SVG 会被 CI 拒绝。延迟会因机器和运行而异，
 并非稳定的性能保证。
 
-> **范围：** 100% 仅表示这个小型合成回归语料库通过了测试。
-> 它并不衡量充满噪声的长期保险库、语义改写、OCR 或文档摄取、并发写入、
-> 答案忠实度或多跳图推理。
+若要衡量你自己存储的数据，请将
+[带真值标签的语料库](benchmarks/corpora/retrieval-quality-v1.json)复制到仓库之外，
+替换合成文档和 relevance 标签，并把结果保留在本地：
+
+```bash
+cp benchmarks/corpora/retrieval-quality-v1.json /tmp/my-brain-quality.json
+# 编辑 /tmp 文件中的 documents、queries、relevant 和 forbidden。
+uv run --locked python -m benchmarks.retrieval_quality \
+  --corpus /tmp/my-brain-quality.json \
+  --output /tmp/my-brain-quality-result.json
+```
+
+结果不会记录文档正文或查询正文，但 ID 仍可能敏感；请勿提交个人语料库或结果。
+
+> **范围：** 这些数值来自小型合成回归语料库，并不保证个人知识库的性能。
+> 它不衡量 OCR 提取、并发写入、LLM 使用检索上下文后的答案忠实度或多跳图推理。
+> 若要声明对你自己数据的准确率，必须使用由你标注真值的个人语料库。
 
 <a id="installation-and-trust"></a>
 

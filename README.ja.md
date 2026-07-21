@@ -116,6 +116,25 @@ Codex hooks ───────┘            ├─ Markdown vault: durable r
 | レイテンシ | **24.31 ms p50 · 28.14 ms p95** |
 | 環境 | macOS arm64 · Python 3.13.11 · Wikimap 1.1.0 |
 
+### 検索品質と取り込みの完全性
+
+<p align="center">
+  <img src="docs/assets/benchmark-retrieval-quality-v1.svg" width="920" alt="WikiBrain 検索品質ベンチマーク：Recall@1 69.44%、Recall@3 87.50%、nDCG@3 81.35%、MRR 87.50%、Top-1 出典一致率 83.33%、14 件中 14 件の文書を受理、禁止文書の露出率 0%">
+</p>
+
+レイテンシとは別に、正解ラベル付きコーパスで検索順位を測定します。14 件の合成文書を取り込み、インデックス作成後に 1 件を削除してから、完全一致、言い換え、複数正解、グローバル設定、ワークスペーススコープを含む 12 件のクエリを実行します。
+
+| 品質結果 | 値 |
+| --- | ---: |
+| 取り込み受理率 | **14/14 · 100.00%** |
+| 保存内容の存在率 | **100.00%** |
+| Recall@1 / Recall@3 | **69.44% / 87.50%** |
+| MRR / nDCG@3 | **87.50% / 81.35%** |
+| Top-1 出典一致率 | **83.33%** |
+| 禁止文書の露出 | **0/12 queries · 0.00%** |
+
+`forbidden` ラベルには、別ワークスペース、置き換え済みの決定、削除済みの記憶が含まれます。検索スコアが完全でないのは意図的です。言い換えと順位付けの弱点を表面化し、8/8 の機能チェックを検索精度として誇張しません。
+
 <details>
 <summary><strong>8 件のチェックの対象</strong></summary>
 
@@ -140,12 +159,28 @@ uv run --locked python -m benchmarks.second_brain \
   --format json \
   --output benchmarks/results/second-brain-v1.json
 uv run --locked python scripts/render_benchmark_chart.py
+
+uv run --locked python -m benchmarks.retrieval_quality \
+  --corpus benchmarks/corpora/retrieval-quality-v1.json \
+  --output benchmarks/results/retrieval-quality-v1.json
+uv run --locked python scripts/render_retrieval_quality_chart.py
 ```
 
-機械可読な結果は [`benchmarks/results/second-brain-v1.json`](benchmarks/results/second-brain-v1.json) にあります。グラフはこのファイルから生成されます。古い SVG は CI によって拒否されます。レイテンシはマシンや実行ごとに変動するため、安定した性能を保証するものではありません。
+機械可読な結果は [`second-brain-v1.json`](benchmarks/results/second-brain-v1.json) と [`retrieval-quality-v1.json`](benchmarks/results/retrieval-quality-v1.json) にあります。どちらのグラフも対応する JSON から生成され、古い SVG は CI によって拒否されます。レイテンシはマシンや実行ごとに変動するため、安定した性能を保証するものではありません。
 
-> **範囲：** 100% は、この小規模な合成回帰コーパスに合格したことだけを意味します。
-> ノイズの多い長期運用された Vault、意味的な言い換え、OCR やドキュメント取り込み、同時書き込み、回答の忠実性、マルチホップのグラフ推論は測定していません。
+自分が保存したデータの品質を測るには、[正解ラベル付きコーパス](benchmarks/corpora/retrieval-quality-v1.json)をリポジトリ外にコピーし、合成文書と relevance ラベルを置き換えて、結果をローカルに保存します：
+
+```bash
+cp benchmarks/corpora/retrieval-quality-v1.json /tmp/my-brain-quality.json
+# /tmp の documents、queries、relevant、forbidden を編集します。
+uv run --locked python -m benchmarks.retrieval_quality \
+  --corpus /tmp/my-brain-quality.json \
+  --output /tmp/my-brain-quality-result.json
+```
+
+結果には文書本文とクエリ本文は記録されませんが、ID も機密になり得ます。個人用コーパスや結果をコミットしないでください。
+
+> **範囲：** これは小規模な合成回帰コーパスの結果であり、個人用 Vault の性能を保証するものではありません。OCR 抽出、同時書き込み、検索コンテキストを LLM が使用した後の回答の忠実性、マルチホップのグラフ推論は測定していません。自分のデータに対する精度を主張するには、自分で正解ラベルを付けた個人用コーパスが必要です。
 
 <a id="installation-and-trust"></a>
 

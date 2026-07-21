@@ -30,14 +30,26 @@ class RetrievalQualityChartTests(unittest.TestCase):
                     "forbidden_query_rate": 0.0,
                     "violations": {},
                 },
+                "context_quality": {
+                    "query_count": 12,
+                    "context_recall": 0.875,
+                    "context_precision": 0.791667,
+                    "context_f1": 0.805556,
+                    "required_atom_recall": 0.909091,
+                    "forbidden_query_rate": 0.0,
+                    "violations": {},
+                },
                 "query_engines": {"wikimap": 12},
                 "wikimap_version": "wikimap 1.1.0",
             }
         )
 
-        self.assertIn("Retrieval quality", svg)
-        self.assertIn("Recall@1", svg)
-        self.assertIn("69.44%", svg)
+        self.assertIn("Context recall quality", svg)
+        self.assertIn("Context Recall", svg)
+        self.assertIn("Context Precision", svg)
+        self.assertIn("Required facts", svg)
+        self.assertIn("90.91%", svg)
+        self.assertIn("Retrieval Recall@3", svg)
         self.assertIn("Ingestion integrity", svg)
         self.assertIn("14 / 14", svg)
         self.assertIn("Forbidden exposure", svg)

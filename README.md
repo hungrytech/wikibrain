@@ -121,44 +121,49 @@ trust-boundary details.
 ## Verified benchmark
 
 <p align="center">
-  <img src="docs/assets/benchmark-second-brain-v1.svg" width="920" alt="WikiBrain benchmark: 8 of 8 functional checks passed; recall latency was 24.31 milliseconds p50 and 28.14 milliseconds p95 across 80 samples">
+  <img src="docs/assets/benchmark-second-brain-v1.svg" width="920" alt="WikiBrain final-context benchmark: 8 of 8 context contracts passed, required context atom recall was 100 percent, clean-context rate was 100 percent, and forbidden atom exposure was zero">
 </p>
 
-The fixed-corpus benchmark disables recent-item fallback for query-based
-retrieval checks. A separate handoff check validates recent-context restoration
-through `SessionStart`. Query checks pass only when search returns the expected
-evidence and excludes forbidden stale, secret, or cross-workspace content.
+The fixed-corpus contract benchmark inspects the final `<memory-data>` given to
+the agent, not search latency. Query checks disable recent-item fallback; a
+separate handoff check validates recent-context restoration through
+`SessionStart`. A check passes only when every required fact is present and
+stale, secret, or cross-workspace facts are absent.
 
-| Result | Value |
+| Final-context contract | Value |
 | --- | ---: |
-| Functional checks | **8/8 passed** |
-| Recall samples | **80** (4 queries × 20 iterations) |
-| Latency | **24.31 ms p50 · 28.14 ms p95** |
+| Context checks | **8/8 passed** |
+| Required context atoms | **21/21 · 100.00%** |
+| Clean contexts | **8/8 · 100.00%** |
+| Forbidden atom exposure | **0/4 · 0.00%** |
 | Environment | macOS arm64 · Python 3.13.11 · Wikimap 1.1.0 |
 
-### Retrieval quality and ingestion integrity
+### Labeled final-context quality
 
 <p align="center">
-  <img src="docs/assets/benchmark-retrieval-quality-v1.svg" width="920" alt="WikiBrain retrieval quality benchmark: Recall at 1 69.44 percent, Recall at 3 87.50 percent, nDCG at 3 81.35 percent, MRR 87.50 percent, Top-1 source match 83.33 percent; 14 of 14 documents accepted and zero forbidden-query exposure">
+  <img src="docs/assets/benchmark-retrieval-quality-v1.svg" width="920" alt="WikiBrain context recall benchmark: Context Recall 87.50 percent, Context Precision 79.17 percent, Context F1 80.56 percent, required-fact recall 90.91 percent, and zero forbidden-context exposure across 12 labeled queries">
 </p>
 
-A separate labeled corpus measures ranked retrieval rather than latency. It ingests
-14 synthetic documents, deletes one after indexing, then runs 12 exact,
-paraphrased, multi-relevance, global-preference, and workspace-scoped queries.
+A separate 14-document, 12-query corpus measures what production
+`RecallService.context()` actually injects. Each query labels relevant records,
+minimum required facts, and forbidden stale, deleted, or cross-workspace
+records. The raw query and context text are discarded after scoring.
 
-| Quality result | Value |
+| Final-context quality | Value |
 | --- | ---: |
+| Context Recall / Precision | **87.50% / 79.17%** |
+| Context F1 / required-fact recall | **80.56% / 90.91%** |
+| Forbidden context exposure | **0/12 queries · 0.00%** |
 | Ingestion acceptance | **14/14 · 100.00%** |
-| Stored content presence | **100.00%** |
-| Recall@1 / Recall@3 | **69.44% / 87.50%** |
-| MRR / nDCG@3 | **87.50% / 81.35%** |
-| Top-1 source match | **83.33%** |
-| Forbidden exposure | **0/12 queries · 0.00%** |
+| Retrieval Recall@1 / Recall@3 *(diagnostic)* | **69.44% / 87.50%** |
+| MRR / nDCG@3 *(diagnostic)* | **87.50% / 81.35%** |
 
-`forbidden` labels cover another workspace, a superseded decision, and a deleted
-memory. The non-perfect retrieval scores are intentional: this suite exposes
-paraphrase and ranking weaknesses instead of converting 8/8 functional checks
-into an accuracy claim.
+Context Recall asks whether the required records reached the final prompt.
+Context Precision asks how much of the injected record set was relevant. The
+required-fact score separately catches a selected document whose useful
+evidence was missing or truncated. Ranked retrieval metrics remain diagnostic:
+they help locate a search/ranking cause, but they are not the headline measure
+of second-brain quality.
 
 <details>
 <summary><strong>What the eight checks cover</strong></summary>
@@ -180,7 +185,6 @@ Reproduce it from a source checkout:
 
 ```bash
 uv run --locked python -m benchmarks.second_brain \
-  --iterations 20 \
   --format json \
   --output benchmarks/results/second-brain-v1.json
 uv run --locked python scripts/render_benchmark_chart.py
@@ -194,8 +198,7 @@ uv run --locked python scripts/render_retrieval_quality_chart.py
 Machine-readable results are
 [`second-brain-v1.json`](benchmarks/results/second-brain-v1.json) and
 [`retrieval-quality-v1.json`](benchmarks/results/retrieval-quality-v1.json).
-Both charts are generated from their JSON files; CI rejects stale SVGs. Latency
-varies by machine and run and is not a stable performance guarantee.
+Both charts are generated from their JSON files; CI rejects stale SVGs.
 
 To measure your own stored data, copy the
 [labeled corpus](benchmarks/corpora/retrieval-quality-v1.json) outside the
@@ -204,7 +207,8 @@ result local:
 
 ```bash
 cp benchmarks/corpora/retrieval-quality-v1.json /tmp/my-brain-quality.json
-# Edit /tmp/my-brain-quality.json: documents, queries, relevant, and forbidden.
+# Edit /tmp/my-brain-quality.json: documents, queries, relevant,
+# required_context facts, and forbidden records.
 uv run --locked python -m benchmarks.retrieval_quality \
   --corpus /tmp/my-brain-quality.json \
   --output /tmp/my-brain-quality-result.json

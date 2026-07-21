@@ -113,6 +113,10 @@
       "relevant": {
         "atlas-deploy": 3
       },
+      "required_context": [
+        "Atlas-431",
+        "ap-northeast-2"
+      ],
       "forbidden": {
         "atlas-deleted-draft": "deleted",
         "borealis-deploy": "workspace"
@@ -125,6 +129,9 @@
       "relevant": {
         "atlas-deploy": 3
       },
+      "required_context": [
+        "ap-northeast-2"
+      ],
       "forbidden": {
         "atlas-deleted-draft": "deleted",
         "borealis-deploy": "workspace"
@@ -138,6 +145,11 @@
         "atlas-release-owner": 3,
         "atlas-release-evidence": 1
       },
+      "required_context": [
+        "Mina",
+        "release checklist",
+        "restore drill"
+      ],
       "forbidden": {
         "borealis-release-owner": "workspace"
       }
@@ -149,6 +161,9 @@
       "relevant": {
         "atlas-release-owner": 3
       },
+      "required_context": [
+        "Joon"
+      ],
       "forbidden": {
         "borealis-release-owner": "workspace"
       }
@@ -160,6 +175,9 @@
       "relevant": {
         "atlas-database-backup": 3
       },
+      "required_context": [
+        "14 days"
+      ],
       "forbidden": {}
     },
     {
@@ -169,6 +187,11 @@
       "relevant": {
         "atlas-api-resilience": 3
       },
+      "required_context": [
+        "three total attempts",
+        "200 milliseconds",
+        "800 milliseconds"
+      ],
       "forbidden": {}
     },
     {
@@ -178,6 +201,9 @@
       "relevant": {
         "atlas-slo": 3
       },
+      "required_context": [
+        "p95 below 350 milliseconds"
+      ],
       "forbidden": {}
     },
     {
@@ -188,6 +214,10 @@
         "atlas-restart-runbook": 3,
         "atlas-release-evidence": 1
       },
+      "required_context": [
+        "gateway first",
+        "workers second"
+      ],
       "forbidden": {}
     },
     {
@@ -197,6 +227,10 @@
       "relevant": {
         "atlas-package-current": 3
       },
+      "required_context": [
+        "use uv",
+        "uv.lock"
+      ],
       "forbidden": {
         "atlas-package-old": "superseded"
       }
@@ -208,6 +242,10 @@
       "relevant": {
         "global-report-style": 3
       },
+      "required_context": [
+        "concise Korean",
+        "concrete next actions"
+      ],
       "forbidden": {}
     },
     {
@@ -217,6 +255,9 @@
       "relevant": {
         "global-timezone": 3
       },
+      "required_context": [
+        "Asia/Seoul"
+      ],
       "forbidden": {}
     },
     {
@@ -228,6 +269,11 @@
         "atlas-release-evidence": 3,
         "atlas-restart-runbook": 1
       },
+      "required_context": [
+        "release checklist",
+        "restore drill",
+        "gateway"
+      ],
       "forbidden": {
         "borealis-release-owner": "workspace"
       }

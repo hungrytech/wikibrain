@@ -13,6 +13,7 @@ from benchmarks.retrieval_quality import (
     _source_manifest_sha256,
     derive_forbidden,
     run_quality_benchmark,
+    score_contexts,
     score_rankings,
     validate_corpus,
 )
@@ -31,6 +32,23 @@ class RetrievalQualityCorpusValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate document id"):
             validate_corpus(corpus)
 
+    def test_rejects_missing_context_atom_labels(self) -> None:
+        corpus = {
+            "corpus_version": "v1",
+            "documents": [{"id": "known", "workspace": "atlas"}],
+            "queries": [
+                {
+                    "id": "q1",
+                    "workspace": "atlas",
+                    "relevant": {"known": 3},
+                    "required_context": [],
+                    "forbidden": {},
+                }
+            ],
+        }
+        with self.assertRaisesRegex(ValueError, "required_context"):
+            validate_corpus(corpus)
+
     def test_rejects_unknown_or_conflicting_labels(self) -> None:
         corpus = {
             "corpus_version": "v1",
@@ -40,6 +58,7 @@ class RetrievalQualityCorpusValidationTests(unittest.TestCase):
                     "id": "q1",
                     "workspace": "atlas",
                     "relevant": {"missing": 3},
+                    "required_context": ["known fact"],
                     "forbidden": {"missing": "workspace"},
                 }
             ],
@@ -69,12 +88,63 @@ class RetrievalQualitySafetyLabelTests(unittest.TestCase):
             "id": "q1",
             "workspace": "atlas",
             "relevant": {"current": 3},
+            "required_context": ["current fact"],
             "forbidden": {},
         }
         self.assertEqual(
             derive_forbidden(corpus, query),
             {"other": "workspace", "old": "superseded", "deleted": "deleted"},
         )
+
+
+class ContextRecallMetricTests(unittest.TestCase):
+    def test_scores_final_context_records_and_required_atoms(self) -> None:
+        metrics = score_contexts(
+            [
+                {
+                    "query_id": "partial",
+                    "relevant": {"a": 3, "b": 1},
+                    "records": ["a", "noise"],
+                    "required_atoms": ["use uv", "uv sync --frozen"],
+                    "context": "The current decision says use uv.",
+                    "forbidden": {},
+                },
+                {
+                    "query_id": "complete",
+                    "relevant": {"c": 3},
+                    "records": ["c", "c"],
+                    "required_atoms": ["Mina"],
+                    "context": "Mina owns the release.",
+                    "forbidden": {},
+                },
+            ]
+        )
+
+        self.assertEqual(metrics["query_count"], 2)
+        self.assertAlmostEqual(metrics["context_recall"], 0.75)
+        self.assertAlmostEqual(metrics["context_precision"], 0.75)
+        self.assertAlmostEqual(metrics["context_f1"], 0.75)
+        self.assertAlmostEqual(metrics["required_atom_recall"], 2 / 3)
+        self.assertEqual(metrics["forbidden_query_rate"], 0.0)
+
+    def test_counts_forbidden_records_without_serializing_context(self) -> None:
+        metrics = score_contexts(
+            [
+                {
+                    "query_id": "leak",
+                    "relevant": {"current": 3},
+                    "records": ["current", "old"],
+                    "required_atoms": ["current guidance"],
+                    "context": "current guidance and stale guidance",
+                    "forbidden": {"old": "superseded"},
+                }
+            ]
+        )
+
+        self.assertEqual(metrics["forbidden_query_rate"], 1.0)
+        self.assertEqual(metrics["violations"], {"superseded": 1})
+        self.assertNotIn("context", metrics)
+        self.assertNotIn("required_atoms", metrics)
 
 
 class RetrievalQualityMetricTests(unittest.TestCase):
@@ -188,6 +258,7 @@ class RetrievalQualityIntegrationTests(unittest.TestCase):
                     "workspace": "atlas",
                     "text": "package manager pip replacement",
                     "relevant": {"current-package": 3},
+                    "required_context": ["use uv", "replacing pip"],
                     "forbidden": {
                         "old-package": "superseded",
                         "other-workspace": "workspace",
@@ -215,6 +286,12 @@ class RetrievalQualityIntegrationTests(unittest.TestCase):
         self.assertTrue(result["ingestion"]["index_clean"])
         self.assertEqual(result["quality"]["recall_at_1"], 1.0)
         self.assertEqual(result["quality"]["forbidden_query_rate"], 0.0)
+        self.assertEqual(result["context_quality"]["context_recall"], 1.0)
+        self.assertEqual(result["context_quality"]["context_precision"], 1.0)
+        self.assertEqual(result["context_quality"]["context_f1"], 1.0)
+        self.assertEqual(result["context_quality"]["required_atom_recall"], 1.0)
+        self.assertEqual(result["context_quality"]["forbidden_query_rate"], 0.0)
+        self.assertEqual(result["queries"][0]["context_records"], ["current-package"])
         self.assertEqual(
             result["queries"][0]["retrieved"][0]["document_id"],
             "current-package",
@@ -252,18 +329,32 @@ class RetrievalQualityArtifactTests(unittest.TestCase):
         self.assertGreaterEqual(result["quality"]["recall_at_3"], 0.875)
         self.assertGreaterEqual(result["quality"]["mrr"], 0.875)
         self.assertEqual(result["quality"]["forbidden_query_rate"], 0.0)
+        self.assertGreaterEqual(result["context_quality"]["context_recall"], 0.875)
+        self.assertGreaterEqual(result["context_quality"]["context_precision"], 0.79)
+        self.assertGreaterEqual(result["context_quality"]["context_f1"], 0.80)
+        self.assertGreaterEqual(
+            result["context_quality"]["required_atom_recall"], 0.90
+        )
+        self.assertEqual(result["context_quality"]["forbidden_query_rate"], 0.0)
         self.assertTrue(all("text" not in query for query in result["queries"]))
+        serialized_queries = json.dumps(result["queries"], ensure_ascii=False)
+        self.assertNotIn("Where is the live Atlas service hosted?", serialized_queries)
+        self.assertNotIn("ap-northeast-2", serialized_queries)
 
     def test_all_readmes_match_quality_result(self) -> None:
         result_path = ROOT / "benchmarks" / "results" / "retrieval-quality-v1.json"
         result = json.loads(result_path.read_text(encoding="utf-8"))
         quality = result["quality"]
+        context_quality = result["context_quality"]
         expected = (
+            f"{context_quality['context_recall'] * 100:.2f}%",
+            f"{context_quality['context_precision'] * 100:.2f}%",
+            f"{context_quality['context_f1'] * 100:.2f}%",
+            f"{context_quality['required_atom_recall'] * 100:.2f}%",
             f"{quality['recall_at_1'] * 100:.2f}%",
             f"{quality['recall_at_3'] * 100:.2f}%",
             f"{quality['ndcg_at_3'] * 100:.2f}%",
             f"{quality['mrr'] * 100:.2f}%",
-            f"{quality['top1_source_match'] * 100:.2f}%",
             "benchmark-retrieval-quality-v1.svg",
             "retrieval-quality-v1.json",
         )

@@ -18,23 +18,24 @@ def _percent(value: float) -> str:
 
 def render_svg(result: dict[str, Any]) -> str:
     quality = result["quality"]
+    context_quality = result["context_quality"]
     ingestion = result["ingestion"]
     metrics = [
-        ("Recall@1", float(quality["recall_at_1"])),
-        ("Recall@3", float(quality["recall_at_3"])),
-        ("nDCG@3", float(quality["ndcg_at_3"])),
-        ("MRR", float(quality["mrr"])),
-        ("Top-1 source match", float(quality["top1_source_match"])),
+        ("Context Recall", float(context_quality["context_recall"])),
+        ("Context Precision", float(context_quality["context_precision"])),
+        ("Context F1", float(context_quality["context_f1"])),
+        ("Required facts", float(context_quality["required_atom_recall"])),
+        ("Retrieval Recall@3", float(quality["recall_at_3"])),
     ]
     fingerprint = hashlib.sha256(
         json.dumps(result, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()[:12]
     description = (
-        f"Retrieval quality across {quality['query_count']} labeled queries: "
+        f"Final context quality across {context_quality['query_count']} labeled queries: "
         + ", ".join(f"{name} {_percent(value)}" for name, value in metrics)
         + f". {ingestion['accepted_documents']} of {ingestion['requested_documents']} "
-        "documents were accepted; forbidden exposure was "
-        f"{_percent(float(quality['forbidden_query_rate']))}."
+        "documents were accepted; final-context forbidden exposure was "
+        f"{_percent(float(context_quality['forbidden_query_rate']))}."
     )
 
     rows: list[str] = []
@@ -52,15 +53,15 @@ def render_svg(result: dict[str, Any]) -> str:
 
     accepted = f"{ingestion['accepted_documents']} / {ingestion['requested_documents']}"
     source_content_presence = _percent(float(ingestion["source_content_presence_rate"]))
-    forbidden = _percent(float(quality["forbidden_query_rate"]))
+    forbidden = _percent(float(context_quality["forbidden_query_rate"]))
     index_state = "clean" if ingestion["index_clean"] else "dirty"
     footer = (
-        f"{result['corpus_version']} · {quality['query_count']} queries · "
+        f"{result['corpus_version']} · {context_quality['query_count']} queries · "
         f"{result.get('wikimap_version') or 'wikimap version unavailable'} · result {fingerprint}"
     )
 
     return f'''<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="540" viewBox="0 0 1000 540" role="img" aria-labelledby="title desc">
-<title>WikiBrain retrieval quality benchmark</title>
+<title>WikiBrain context recall quality benchmark</title>
 <desc>{html.escape(description)}</desc>
 <style>
   .bg {{ fill: #0d1117; }}
@@ -78,9 +79,9 @@ def render_svg(result: dict[str, Any]) -> str:
 </style>
 <rect width="1000" height="540" rx="18" class="bg"/>
 <rect x="24" y="24" width="952" height="492" rx="14" class="panel"/>
-<text x="48" y="68" class="title">Retrieval quality</text>
-<text x="48" y="96" class="subtitle">Ranked relevance · source identity · workspace, stale, and deleted-memory suppression</text>
-<text x="48" y="128" class="section">Search quality</text>
+<text x="48" y="68" class="title">Context recall quality</text>
+<text x="48" y="96" class="subtitle">Final injected context · required facts · precision · stale and workspace suppression</text>
+<text x="48" y="128" class="section">Final context quality</text>
 {''.join(rows)}
 <text x="48" y="394" class="section">Ingestion integrity &amp; safety</text>
 <rect x="48" y="410" width="205" height="70" rx="9" class="panel"/>

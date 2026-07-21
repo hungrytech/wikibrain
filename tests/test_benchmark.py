@@ -33,6 +33,30 @@ class SecondBrainBenchmarkTests(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
+    def test_chart_reports_context_quality_without_latency(self) -> None:
+        result_path = ROOT / "benchmarks" / "results" / "second-brain-v1.json"
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+        result.pop("latency_ms", None)
+        result["context_quality"] = {
+            "required_atom_recall": 0.9,
+            "clean_context_rate": 0.8,
+            "forbidden_atom_rate": 0.1,
+            "required_atoms": 20,
+            "forbidden_atoms": 5,
+        }
+        renderer = runpy.run_path(
+            str(ROOT / "scripts" / "render_benchmark_chart.py")
+        )["render_chart"]
+
+        svg = renderer(result)
+
+        self.assertIn("CONTEXT QUALITY", svg)
+        self.assertIn("Required atoms", svg)
+        self.assertIn("Clean contexts", svg)
+        self.assertIn("Forbidden-free", svg)
+        self.assertNotIn("LATENCY", svg)
+        self.assertNotIn(" ms", svg)
+
     def test_chart_distinguishes_failed_checks_without_color_alone(self) -> None:
         result_path = ROOT / "benchmarks" / "results" / "second-brain-v1.json"
         result = json.loads(result_path.read_text(encoding="utf-8"))
@@ -49,12 +73,24 @@ class SecondBrainBenchmarkTests(unittest.TestCase):
     def test_readme_benchmark_values_match_committed_result(self) -> None:
         result_path = ROOT / "benchmarks" / "results" / "second-brain-v1.json"
         result = json.loads(result_path.read_text(encoding="utf-8"))
-        p50 = float(result["latency_ms"]["p50"])
-        p95 = float(result["latency_ms"]["p95"])
+        context_result = json.loads(
+            (ROOT / "benchmarks" / "results" / "retrieval-quality-v1.json").read_text(
+                encoding="utf-8"
+            )
+        )
         passed = int(result["checks_passed"])
         total = int(result["checks_total"])
+        functional_quality = result["context_quality"]
+        labeled_quality = context_result["context_quality"]
 
-        expected_values = (f"{p50:.2f}", f"{p95:.2f}", f"{passed}/{total}")
+        expected_values = (
+            f"{passed}/{total}",
+            f"{100.0 * functional_quality['required_atom_recall']:.2f}%",
+            f"{100.0 * labeled_quality['context_recall']:.2f}%",
+            f"{100.0 * labeled_quality['context_precision']:.2f}%",
+            f"{100.0 * labeled_quality['context_f1']:.2f}%",
+            f"{100.0 * labeled_quality['required_atom_recall']:.2f}%",
+        )
         for readme_name in (
             "README.md",
             "README.ko.md",
@@ -100,11 +136,10 @@ class SecondBrainBenchmarkTests(unittest.TestCase):
             result = run_benchmark(
                 root=Path(temporary),
                 wikimap_command=str(FAKE_WIKIMAP),
-                latency_iterations=2,
             )
 
         self.assertEqual(result["score_percent"], 100.0)
-        self.assertEqual(result["retrieval_mode"], "mixed-contract")
+        self.assertEqual(result["retrieval_mode"], "final-context-contract")
         self.assertEqual(
             result["retrieval_modes"],
             {
@@ -114,7 +149,10 @@ class SecondBrainBenchmarkTests(unittest.TestCase):
         )
         self.assertEqual(result["checks_passed"], result["checks_total"])
         self.assertGreaterEqual(result["corpus_documents"], 6)
-        self.assertGreater(result["latency_ms"]["p50"], 0)
+        self.assertEqual(result["context_quality"]["required_atom_recall"], 1.0)
+        self.assertEqual(result["context_quality"]["clean_context_rate"], 1.0)
+        self.assertEqual(result["context_quality"]["forbidden_atom_rate"], 0.0)
+        self.assertNotIn("latency_ms", result)
         self.assertTrue(all(case["passed"] for case in result["cases"]))
 
     def test_provenance_hash_normalizes_checkout_line_endings(self) -> None:
@@ -133,9 +171,9 @@ class SecondBrainBenchmarkTests(unittest.TestCase):
         provenance = result["provenance"]
 
         self.assertEqual(provenance["corpus_version"], "second-brain-corpus-v1")
-        self.assertEqual(provenance["latency_iterations"], 20)
-        self.assertEqual(provenance["latency_queries"], 4)
-        self.assertEqual(result["latency_ms"]["samples"], 80)
+        self.assertNotIn("latency_iterations", provenance)
+        self.assertNotIn("latency_queries", provenance)
+        self.assertNotIn("--iterations", provenance["reproduction_command"])
         self.assertEqual(
             provenance["runner_sha256"], file_sha256(runner)
         )
@@ -143,7 +181,10 @@ class SecondBrainBenchmarkTests(unittest.TestCase):
             provenance["source_manifest_sha256"], source_manifest_sha256()
         )
         self.assertRegex(provenance["git_commit"], r"^[0-9a-f]{40}$")
-        self.assertIn("--iterations 20", provenance["reproduction_command"])
+        self.assertIn(
+            "--output benchmarks/results/second-brain-v1.json",
+            provenance["reproduction_command"],
+        )
         self.assertRegex(
             provenance["generated_at"], r"^\d{4}-\d{2}-\d{2}T.*\+00:00$"
         )

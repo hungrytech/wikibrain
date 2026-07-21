@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 import platform
+import re
 import subprocess
 import tempfile
 from collections import Counter
@@ -90,6 +91,58 @@ def score_rankings(
     return metrics
 
 
+def score_contexts(cases: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    """Score records and labeled facts present in the final rendered context."""
+    case_list = list(cases)
+    recalls: list[float] = []
+    precisions: list[float] = []
+    f1_scores: list[float] = []
+    required_atom_count = 0
+    found_atom_count = 0
+    forbidden_queries: list[float] = []
+    violations: Counter[str] = Counter()
+
+    for case in case_list:
+        relevant = {str(document_id) for document_id in case["relevant"]}
+        records = list(dict.fromkeys(str(document_id) for document_id in case["records"]))
+        found = relevant.intersection(records)
+        recall = len(found) / len(relevant) if relevant else 0.0
+        precision = len(found) / len(records) if records else 0.0
+        f1 = (
+            2.0 * precision * recall / (precision + recall)
+            if precision + recall
+            else 0.0
+        )
+        recalls.append(recall)
+        precisions.append(precision)
+        f1_scores.append(f1)
+
+        context = str(case["context"]).casefold()
+        required_atoms = [str(atom).casefold() for atom in case["required_atoms"]]
+        required_atom_count += len(required_atoms)
+        found_atom_count += sum(atom in context for atom in required_atoms)
+
+        forbidden = {
+            str(document_id): str(reason)
+            for document_id, reason in case["forbidden"].items()
+        }
+        exposed = {document_id for document_id in records if document_id in forbidden}
+        forbidden_queries.append(float(bool(exposed)))
+        violations.update(forbidden[document_id] for document_id in exposed)
+
+    return {
+        "query_count": len(case_list),
+        "context_recall": _mean(recalls),
+        "context_precision": _mean(precisions),
+        "context_f1": _mean(f1_scores),
+        "required_atom_recall": (
+            found_atom_count / required_atom_count if required_atom_count else 0.0
+        ),
+        "forbidden_query_rate": _mean(forbidden_queries),
+        "violations": dict(sorted(violations.items())),
+    }
+
+
 def derive_forbidden(
     corpus: Mapping[str, Any], query: Mapping[str, Any]
 ) -> dict[str, str]:
@@ -159,6 +212,16 @@ def validate_corpus(corpus: Mapping[str, Any]) -> None:
         query_id = str(query["id"])
         relevant = {str(key) for key in query.get("relevant", {})}
         forbidden = {str(key) for key in query.get("forbidden", {})}
+        required_context = query.get("required_context")
+        if (
+            not isinstance(required_context, list)
+            or not required_context
+            or any(not isinstance(atom, str) or not atom.strip() for atom in required_context)
+        ):
+            raise ValueError(
+                f"query {query_id} required_context must be a non-empty list "
+                "of non-empty strings"
+            )
         if not relevant:
             raise ValueError(f"query {query_id} requires at least one relevant document")
         unknown = sorted((relevant | forbidden) - known)
@@ -258,6 +321,7 @@ def run_quality_benchmark(
         curator.update_index()
 
     score_cases: list[dict[str, Any]] = []
+    context_score_cases: list[dict[str, Any]] = []
     query_results: list[dict[str, Any]] = []
     engine_counts: Counter[str] = Counter()
     for query in corpus["queries"]:
@@ -269,18 +333,44 @@ def run_quality_benchmark(
             for _, row in hits
             if str(row["document_id"]) in actual_to_symbolic
         ]
+        context = recall.context(
+            str(workspaces[workspace_name]),
+            str(query["text"]),
+            include_recent=False,
+        )
+        context_records = list(
+            dict.fromkeys(
+                actual_to_symbolic[actual_id]
+                for actual_id in re.findall(
+                    r'<record index="\d+" id="([^"]+)"', context
+                )
+                if actual_id in actual_to_symbolic
+            )
+        )
+        forbidden = derive_forbidden(corpus, query)
+        context_score_cases.append(
+            {
+                "query_id": str(query["id"]),
+                "relevant": query["relevant"],
+                "records": context_records,
+                "required_atoms": query.get("required_context", []),
+                "context": context,
+                "forbidden": forbidden,
+            }
+        )
         score_cases.append(
             {
                 "query_id": str(query["id"]),
                 "relevant": query["relevant"],
                 "retrieved": retrieved,
-                "forbidden": derive_forbidden(corpus, query),
+                "forbidden": forbidden,
             }
         )
         query_results.append(
             {
                 "query_id": str(query["id"]),
                 "engine": engine,
+                "context_records": context_records,
                 "retrieved": [
                     {"rank": rank, "document_id": document_id}
                     for rank, document_id in enumerate(retrieved, start=1)
@@ -309,6 +399,7 @@ def run_quality_benchmark(
             "index_clean": not store.index_dirty(),
         },
         "quality": score_rankings(score_cases),
+        "context_quality": score_contexts(context_score_cases),
         "query_engines": dict(sorted(engine_counts.items())),
         "queries": query_results,
         "wikimap_version": wikimap.version(),

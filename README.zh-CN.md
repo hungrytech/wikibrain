@@ -114,42 +114,37 @@ Codex hooks ───────┘            ├─ Markdown vault: durable r
 ## 经验证的基准测试
 
 <p align="center">
-  <img src="docs/assets/benchmark-second-brain-v1.svg" width="920" alt="WikiBrain 基准测试：8 项功能检查中 8 项全部通过；在 80 个样本中，检索延迟为 p50 24.31 毫秒、p95 28.14 毫秒">
+  <img src="docs/assets/benchmark-second-brain-v1.svg" width="920" alt="WikiBrain 最终上下文基准：8 项上下文契约全部通过；必需上下文 atom recall 为 100%，clean context 为 100%，禁止 atom 暴露为 0%">
 </p>
 
-固定语料库基准测试的查询检索检查会禁用近期条目回退。另一项交接检查
-单独验证 `SessionStart` 的近期上下文恢复。只有当查询检索返回预期证据，
-并排除被禁止的过时内容、机密信息或跨工作区内容时，查询检查才算通过。
+固定语料库契约基准检查的是交给智能体的最终 `<memory-data>`，而不是搜索延迟。查询检查会禁用近期条目回退，另一项交接检查验证 `SessionStart` 的近期上下文恢复。只有当所有必需事实都存在，且没有过时指令、机密信息或跨工作区内容时，检查才算通过。
 
-| 结果 | 数值 |
+| 最终上下文契约 | 数值 |
 | --- | ---: |
-| 功能检查 | **8/8 通过** |
-| 检索样本 | **80**（4 个查询 × 20 次迭代） |
-| 延迟 | **24.31 ms p50 · 28.14 ms p95** |
+| 上下文检查 | **8/8 通过** |
+| 必需上下文 atom | **21/21 · 100.00%** |
+| Clean context | **8/8 · 100.00%** |
+| 禁止 atom 暴露 | **0/4 · 0.00%** |
 | 环境 | macOS arm64 · Python 3.13.11 · Wikimap 1.1.0 |
 
-### 检索质量与摄取完整性
+### 带真值标签的最终上下文质量
 
 <p align="center">
-  <img src="docs/assets/benchmark-retrieval-quality-v1.svg" width="920" alt="WikiBrain 检索质量基准：Recall@1 为 69.44%，Recall@3 为 87.50%，nDCG@3 为 81.35%，MRR 为 87.50%，Top-1 来源匹配率为 83.33%；14 份文档全部摄取，禁止文档暴露率为 0%">
+  <img src="docs/assets/benchmark-retrieval-quality-v1.svg" width="920" alt="WikiBrain 上下文召回基准：Context Recall 87.50%，Context Precision 79.17%，Context F1 80.56%，必需事实 recall 90.91%，12 个查询中的禁止上下文暴露为 0%">
 </p>
 
-除了延迟之外，另一个带有真值标签的语料库用于衡量检索排序。它摄取 14 份
-合成文档，在建立索引后删除其中 1 份，然后运行 12 个包含精确表达、语义改写、
-多相关项、全局偏好和工作区范围的查询。
+另一个包含 14 份文档和 12 个查询的语料库，衡量生产路径 `RecallService.context()` 实际注入的内容。每个查询都标注相关记录、最低必需事实，以及禁止的 stale、已删除或跨工作区记录。查询正文和最终上下文正文在评分后即被丢弃。
 
-| 质量结果 | 数值 |
+| 最终上下文质量 | 数值 |
 | --- | ---: |
+| Context Recall / Precision | **87.50% / 79.17%** |
+| Context F1 / 必需事实 recall | **80.56% / 90.91%** |
+| 禁止上下文暴露 | **0/12 个查询 · 0.00%** |
 | 摄取接受率 | **14/14 · 100.00%** |
-| 存储内容存在率 | **100.00%** |
-| Recall@1 / Recall@3 | **69.44% / 87.50%** |
-| MRR / nDCG@3 | **87.50% / 81.35%** |
-| Top-1 来源匹配率 | **83.33%** |
-| 禁止文档暴露 | **0/12 个查询 · 0.00%** |
+| Retrieval Recall@1 / Recall@3 *（诊断）* | **69.44% / 87.50%** |
+| MRR / nDCG@3 *（诊断）* | **87.50% / 81.35%** |
 
-`forbidden` 标签覆盖其他工作区、已被取代的决策和已删除的记忆。非满分的检索
-结果是刻意保留的：该套件用于暴露语义改写和排序弱点，而不会把 8/8 的功能
-检查夸大为检索准确率。
+Context Recall 衡量必需记录是否到达最终提示词；Context Precision 衡量注入记录中相关记录的比例。必需事实 recall 还能发现文档虽被选中，但有用证据缺失或被截断的情况。检索排序指标仅用于定位搜索或排序原因，不再作为第二大脑质量的主指标。
 
 <details>
 <summary><strong>八项检查涵盖的内容</strong></summary>
@@ -171,7 +166,6 @@ Codex hooks ───────┘            ├─ Markdown vault: durable r
 
 ```bash
 uv run --locked python -m benchmarks.second_brain \
-  --iterations 20 \
   --format json \
   --output benchmarks/results/second-brain-v1.json
 uv run --locked python scripts/render_benchmark_chart.py
@@ -185,8 +179,7 @@ uv run --locked python scripts/render_retrieval_quality_chart.py
 机器可读的结果位于
 [`second-brain-v1.json`](benchmarks/results/second-brain-v1.json) 和
 [`retrieval-quality-v1.json`](benchmarks/results/retrieval-quality-v1.json)。
-两张图表都由相应的 JSON 生成；过时的 SVG 会被 CI 拒绝。延迟会因机器和运行而异，
-并非稳定的性能保证。
+两张图表都由相应的 JSON 生成；过时的 SVG 会被 CI 拒绝。
 
 若要衡量你自己存储的数据，请将
 [带真值标签的语料库](benchmarks/corpora/retrieval-quality-v1.json)复制到仓库之外，
@@ -194,7 +187,7 @@ uv run --locked python scripts/render_retrieval_quality_chart.py
 
 ```bash
 cp benchmarks/corpora/retrieval-quality-v1.json /tmp/my-brain-quality.json
-# 编辑 /tmp 文件中的 documents、queries、relevant 和 forbidden。
+# 编辑 /tmp 文件中的 documents、queries、relevant、required_context 和 forbidden。
 uv run --locked python -m benchmarks.retrieval_quality \
   --corpus /tmp/my-brain-quality.json \
   --output /tmp/my-brain-quality-result.json

@@ -6,10 +6,8 @@ import json
 import platform
 import shlex
 import shutil
-import statistics
 import subprocess
 import tempfile
-import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -75,12 +73,6 @@ def _git_metadata() -> tuple[str, bool]:
         return "unavailable", True
 
 
-def _percentile(values: list[float], percentile: float) -> float:
-    ordered = sorted(values)
-    index = min(len(ordered) - 1, max(0, int((len(ordered) - 1) * percentile)))
-    return ordered[index]
-
-
 def _case(
     name: str,
     category: str,
@@ -106,7 +98,6 @@ def run_benchmark(
     *,
     root: Path,
     wikimap_command: str = "wikimap",
-    latency_iterations: int = 10,
 ) -> dict[str, Any]:
     """Run a fixed-corpus, local-only second-brain regression benchmark."""
 
@@ -308,18 +299,11 @@ def run_benchmark(
         ),
     ]
 
-    latency_queries = (
-        "package manager decision",
-        "who owns the release checklist",
-        "Saffron-418",
-        "status report preference",
-    )
-    latencies: list[float] = []
-    for _ in range(max(1, latency_iterations)):
-        for query in latency_queries:
-            started = time.perf_counter()
-            recall.context(str(atlas), query, include_recent=False)
-            latencies.append((time.perf_counter() - started) * 1_000)
+    required_atoms = sum(len(case["expected"]) for case in cases)
+    missing_atoms = sum(len(case["missing"]) for case in cases)
+    forbidden_atoms = sum(len(case["forbidden"]) for case in cases)
+    leaked_atoms = sum(len(case["unexpected"]) for case in cases)
+    clean_contexts = sum(1 for case in cases if not case["unexpected"])
 
     passed = sum(1 for case in cases if case["passed"])
     git_commit, git_dirty = _git_metadata()
@@ -332,8 +316,6 @@ def run_benchmark(
             "benchmarks.second_brain",
             "--wikimap",
             Path(wikimap_command).name,
-            "--iterations",
-            str(latency_iterations),
             "--format",
             "json",
             "--output",
@@ -342,7 +324,7 @@ def run_benchmark(
     )
     return {
         "benchmark": BENCHMARK_VERSION,
-        "retrieval_mode": "mixed-contract",
+        "retrieval_mode": "final-context-contract",
         "retrieval_modes": {
             "query_checks": "query-only-no-recent-fallback",
             "handoff_check": "session-start-recent-context",
@@ -354,16 +336,22 @@ def run_benchmark(
         "checks_passed": passed,
         "checks_total": len(cases),
         "score_percent": round(100.0 * passed / len(cases), 1),
-        "latency_ms": {
-            "samples": len(latencies),
-            "p50": round(statistics.median(latencies), 2),
-            "p95": round(_percentile(latencies, 0.95), 2),
+        "context_quality": {
+            "required_atom_recall": (
+                (required_atoms - missing_atoms) / required_atoms
+                if required_atoms
+                else 0.0
+            ),
+            "clean_context_rate": clean_contexts / len(cases) if cases else 0.0,
+            "forbidden_atom_rate": (
+                leaked_atoms / forbidden_atoms if forbidden_atoms else 0.0
+            ),
+            "required_atoms": required_atoms,
+            "forbidden_atoms": forbidden_atoms,
         },
         "provenance": {
             "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
             "corpus_version": CORPUS_VERSION,
-            "latency_iterations": latency_iterations,
-            "latency_queries": len(latency_queries),
             "runner_sha256": _file_sha256(Path(__file__).resolve()),
             "source_manifest_sha256": source_manifest_sha256(),
             "git_commit": git_commit,
@@ -381,8 +369,12 @@ def _markdown(result: dict[str, Any]) -> str:
         f"- Score: **{result['checks_passed']}/{result['checks_total']} "
         f"({result['score_percent']}%)**",
         f"- Corpus documents: **{result['corpus_documents']}**",
-        f"- Recall latency: **p50 {result['latency_ms']['p50']} ms**, "
-        f"**p95 {result['latency_ms']['p95']} ms**",
+        f"- Required context atoms recalled: "
+        f"**{100.0 * result['context_quality']['required_atom_recall']:.2f}%**",
+        f"- Clean contexts: "
+        f"**{100.0 * result['context_quality']['clean_context_rate']:.2f}%**",
+        f"- Forbidden atom rate: "
+        f"**{100.0 * result['context_quality']['forbidden_atom_rate']:.2f}%**",
         f"- Engine: `{result['engine']}`",
         "",
         "| Check | Category | Result |",
@@ -397,7 +389,6 @@ def _markdown(result: dict[str, Any]) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wikimap", default=shutil.which("wikimap") or "wikimap")
-    parser.add_argument("--iterations", type=int, default=10)
     parser.add_argument("--format", choices=("json", "markdown"), default="json")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
@@ -406,7 +397,6 @@ def main() -> int:
         result = run_benchmark(
             root=Path(temporary),
             wikimap_command=args.wikimap,
-            latency_iterations=args.iterations,
         )
     text = (
         json.dumps(result, ensure_ascii=False, indent=2) + "\n"

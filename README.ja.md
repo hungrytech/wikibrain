@@ -104,36 +104,37 @@ Codex hooks ───────┘            ├─ Markdown vault: durable r
 ## 検証済みベンチマーク
 
 <p align="center">
-  <img src="docs/assets/benchmark-second-brain-v1.svg" width="920" alt="WikiBrain ベンチマーク：8 件中 8 件の機能チェックに合格。80 サンプルにおける呼び出しレイテンシは p50 が 24.31 ミリ秒、p95 が 28.14 ミリ秒">
+  <img src="docs/assets/benchmark-second-brain-v1.svg" width="920" alt="WikiBrain 最終コンテキストベンチマーク：8 件中 8 件のコンテキスト契約に合格。必須コンテキスト atom recall 100%、clean context 100%、禁止 atom の露出 0%">
 </p>
 
-固定コーパスベンチマークのクエリ検索チェックでは、最近の項目へのフォールバックを無効にします。別の引き継ぎチェックでは、`SessionStart` による最近のコンテキスト復元を検証します。クエリ検索チェックは、期待される証拠を返し、禁止された古い内容、機密情報、または別ワークスペースの内容を除外した場合にのみ合格します。
+固定コーパスの契約ベンチマークは検索レイテンシではなく、エージェントに渡される最終 `<memory-data>` を検査します。クエリチェックでは最近の項目へのフォールバックを無効にし、別の引き継ぎチェックでは `SessionStart` による最近のコンテキスト復元を検証します。必要な事実がすべて存在し、古い指示、機密情報、別ワークスペースの内容が存在しない場合にのみ合格します。
 
-| 結果 | 値 |
+| 最終コンテキスト契約 | 値 |
 | --- | ---: |
-| 機能チェック | **8/8 passed** |
-| 呼び出しサンプル | **80** (4 queries × 20 iterations) |
-| レイテンシ | **24.31 ms p50 · 28.14 ms p95** |
+| コンテキストチェック | **8/8 passed** |
+| 必須コンテキスト atom | **21/21 · 100.00%** |
+| Clean context | **8/8 · 100.00%** |
+| 禁止 atom の露出 | **0/4 · 0.00%** |
 | 環境 | macOS arm64 · Python 3.13.11 · Wikimap 1.1.0 |
 
-### 検索品質と取り込みの完全性
+### 正解ラベル付き最終コンテキスト品質
 
 <p align="center">
-  <img src="docs/assets/benchmark-retrieval-quality-v1.svg" width="920" alt="WikiBrain 検索品質ベンチマーク：Recall@1 69.44%、Recall@3 87.50%、nDCG@3 81.35%、MRR 87.50%、Top-1 出典一致率 83.33%、14 件中 14 件の文書を受理、禁止文書の露出率 0%">
+  <img src="docs/assets/benchmark-retrieval-quality-v1.svg" width="920" alt="WikiBrain コンテキスト呼び出しベンチマーク：Context Recall 87.50%、Context Precision 79.17%、Context F1 80.56%、必須事実 recall 90.91%、12 クエリで禁止コンテキスト露出 0%">
 </p>
 
-レイテンシとは別に、正解ラベル付きコーパスで検索順位を測定します。14 件の合成文書を取り込み、インデックス作成後に 1 件を削除してから、完全一致、言い換え、複数正解、グローバル設定、ワークスペーススコープを含む 12 件のクエリを実行します。
+別の 14 文書・12 クエリのコーパスは、本番の `RecallService.context()` が実際に注入する内容を測定します。各クエリには関連レコード、最低限必要な事実、禁止する stale、削除済み、別ワークスペースのレコードをラベル付けします。クエリ本文と最終コンテキスト本文は採点後に破棄します。
 
-| 品質結果 | 値 |
+| 最終コンテキスト品質 | 値 |
 | --- | ---: |
+| Context Recall / Precision | **87.50% / 79.17%** |
+| Context F1 / 必須事実 recall | **80.56% / 90.91%** |
+| 禁止コンテキスト露出 | **0/12 queries · 0.00%** |
 | 取り込み受理率 | **14/14 · 100.00%** |
-| 保存内容の存在率 | **100.00%** |
-| Recall@1 / Recall@3 | **69.44% / 87.50%** |
-| MRR / nDCG@3 | **87.50% / 81.35%** |
-| Top-1 出典一致率 | **83.33%** |
-| 禁止文書の露出 | **0/12 queries · 0.00%** |
+| Retrieval Recall@1 / Recall@3 *(診断用)* | **69.44% / 87.50%** |
+| MRR / nDCG@3 *(診断用)* | **87.50% / 81.35%** |
 
-`forbidden` ラベルには、別ワークスペース、置き換え済みの決定、削除済みの記憶が含まれます。検索スコアが完全でないのは意図的です。言い換えと順位付けの弱点を表面化し、8/8 の機能チェックを検索精度として誇張しません。
+Context Recall は必要なレコードが最終プロンプトまで届いたかを測ります。Context Precision は注入されたレコードのうち関連レコードの割合です。必須事実 recall は、選択された文書の有用な証拠が欠落または切り詰められた場合も検出します。検索順位の指標は検索・ランキング原因を特定するための診断値であり、第二の脳の品質を代表する指標ではありません。
 
 <details>
 <summary><strong>8 件のチェックの対象</strong></summary>
@@ -155,7 +156,6 @@ Codex hooks ───────┘            ├─ Markdown vault: durable r
 
 ```bash
 uv run --locked python -m benchmarks.second_brain \
-  --iterations 20 \
   --format json \
   --output benchmarks/results/second-brain-v1.json
 uv run --locked python scripts/render_benchmark_chart.py
@@ -166,13 +166,13 @@ uv run --locked python -m benchmarks.retrieval_quality \
 uv run --locked python scripts/render_retrieval_quality_chart.py
 ```
 
-機械可読な結果は [`second-brain-v1.json`](benchmarks/results/second-brain-v1.json) と [`retrieval-quality-v1.json`](benchmarks/results/retrieval-quality-v1.json) にあります。どちらのグラフも対応する JSON から生成され、古い SVG は CI によって拒否されます。レイテンシはマシンや実行ごとに変動するため、安定した性能を保証するものではありません。
+機械可読な結果は [`second-brain-v1.json`](benchmarks/results/second-brain-v1.json) と [`retrieval-quality-v1.json`](benchmarks/results/retrieval-quality-v1.json) にあります。どちらのグラフも対応する JSON から生成され、古い SVG は CI によって拒否されます。
 
 自分が保存したデータの品質を測るには、[正解ラベル付きコーパス](benchmarks/corpora/retrieval-quality-v1.json)をリポジトリ外にコピーし、合成文書と relevance ラベルを置き換えて、結果をローカルに保存します：
 
 ```bash
 cp benchmarks/corpora/retrieval-quality-v1.json /tmp/my-brain-quality.json
-# /tmp の documents、queries、relevant、forbidden を編集します。
+# /tmp の documents、queries、relevant、required_context、forbidden を編集します。
 uv run --locked python -m benchmarks.retrieval_quality \
   --corpus /tmp/my-brain-quality.json \
   --output /tmp/my-brain-quality-result.json

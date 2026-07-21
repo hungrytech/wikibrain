@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 from html import escape
 from pathlib import Path
 from typing import Any
@@ -35,12 +34,12 @@ def _text(x: int, y: int, value: str, *, size: int = 16, weight: int = 400,
 
 def render_chart(result: dict[str, Any]) -> str:
     cases: list[dict[str, Any]] = list(result["cases"])
-    latency: dict[str, Any] = dict(result["latency_ms"])
+    quality: dict[str, Any] = dict(result["context_quality"])
     passed = int(result["checks_passed"])
     total = int(result["checks_total"])
-    p50 = float(latency["p50"])
-    p95 = float(latency["p95"])
-    samples = int(latency["samples"])
+    required_recall = 100.0 * float(quality["required_atom_recall"])
+    clean_contexts = 100.0 * float(quality["clean_context_rate"])
+    forbidden_free = 100.0 * (1.0 - float(quality["forbidden_atom_rate"]))
     failed_labels = [
         CASE_LABELS.get(str(case["name"]), str(case["name"]))
         for case in cases
@@ -51,17 +50,16 @@ def render_chart(result: dict[str, Any]) -> str:
         if failed_labels
         else " No checks failed."
     )
-    axis_max = max(10, int(math.ceil(max(p50, p95) * 1.15 / 10.0) * 10))
 
     lines = [
         '<svg xmlns="http://www.w3.org/2000/svg" width="920" height="430" viewBox="0 0 920 430" role="img" aria-labelledby="title desc">',
-        '<title id="title">WikiBrain second-brain benchmark</title>',
-        f'<desc id="desc">{passed} of {total} functional checks passed. Recall latency was {p50:.2f} milliseconds p50 and {p95:.2f} milliseconds p95 across {samples} query samples.{failure_detail}</desc>',
+        '<title id="title">WikiBrain final-context benchmark</title>',
+        f'<desc id="desc">{passed} of {total} final-context checks passed. Required context atom recall was {required_recall:.2f} percent, clean-context rate was {clean_contexts:.2f} percent, and forbidden-free rate was {forbidden_free:.2f} percent.{failure_detail}</desc>',
         '<rect width="920" height="430" rx="24" fill="#0b1320"/>',
         '<rect x="1" y="1" width="918" height="428" rx="23" fill="none" stroke="#25364a"/>',
         _text(40, 48, "SECOND-BRAIN BENCHMARK", size=13, weight=700, fill="#7dd3fc"),
-        _text(40, 82, "Retrieval quality and latency", size=26, weight=700, fill="#f8fafc"),
-        _text(40, 108, "Fixed corpus · query search + SessionStart restore", size=14, fill="#8fa3b8"),
+        _text(40, 82, "Final context recall quality", size=26, weight=700, fill="#f8fafc"),
+        _text(40, 108, "Fixed corpus · query context + SessionStart handoff", size=14, fill="#8fa3b8"),
         '<rect x="40" y="132" width="392" height="228" rx="16" fill="#101d2d"/>',
         '<rect x="456" y="132" width="424" height="228" rx="16" fill="#101d2d"/>',
         _text(64, 164, "FUNCTIONAL CHECKS", size=12, weight=700, fill="#8fa3b8"),
@@ -87,37 +85,31 @@ def render_chart(result: dict[str, Any]) -> str:
             _text(x + 22, y, label, size=13, fill="#d7e1ea"),
         ])
 
-    lines.extend([
-        _text(480, 164, "RECALL LATENCY (MS)", size=12, weight=700, fill="#8fa3b8"),
-        _text(856, 164, f"{samples} samples", size=12, fill="#8fa3b8", anchor="end"),
-    ])
+    lines.append(
+        _text(480, 164, "CONTEXT QUALITY", size=12, weight=700, fill="#8fa3b8")
+    )
 
-    chart_x = 550
-    chart_width = 220
+    chart_x = 632
+    chart_width = 150
     for label, value, y, color in (
-        ("p50", p50, 218, "#38bdf8"),
-        ("p95", p95, 286, "#a78bfa"),
+        ("Required atoms", required_recall, 208, "#38bdf8"),
+        ("Clean contexts", clean_contexts, 266, "#86efac"),
+        ("Forbidden-free", forbidden_free, 324, "#a78bfa"),
     ):
-        width = round(chart_width * value / axis_max)
+        width = round(chart_width * max(0.0, min(100.0, value)) / 100.0)
         lines.extend([
-            _text(480, y + 6, label, size=14, weight=700, fill="#d7e1ea"),
+            _text(480, y + 6, label, size=13, weight=700, fill="#d7e1ea"),
             f'<rect x="{chart_x}" y="{y - 14}" width="{chart_width}" height="24" rx="8" fill="#1e3044"/>',
             f'<rect x="{chart_x}" y="{y - 14}" width="{width}" height="24" rx="8" fill="{color}"/>',
-            _text(856, y + 6, f"{value:.2f} ms", size=14, weight=700, fill="#f8fafc", anchor="end"),
+            _text(856, y + 6, f"{value:.2f}%", size=13, weight=700, fill="#f8fafc", anchor="end"),
         ])
 
-    for tick in range(0, axis_max + 1, 10):
-        x = chart_x + round(chart_width * tick / axis_max)
-        lines.extend([
-            f'<line x1="{x}" y1="320" x2="{x}" y2="326" stroke="#52677d"/>',
-            _text(x, 345, str(tick), size=11, fill="#8fa3b8", anchor="middle"),
-        ])
     platform = str(result["platform"]).replace("macOS-", "macOS ").replace("-arm64-arm-64bit-Mach-O", " · arm64")
     footer = f'{platform} · Python {result["python"]} · {result["engine"]}'
     lines.extend([
         '<line x1="40" y1="386" x2="880" y2="386" stroke="#25364a"/>',
         _text(40, 411, footer, size=12, fill="#8fa3b8"),
-        _text(864, 411, "Lower is better", size=12, fill="#8fa3b8", anchor="end"),
+        _text(864, 411, "Higher is better", size=12, fill="#8fa3b8", anchor="end"),
         '</svg>',
     ])
     return "\n".join(lines) + "\n"

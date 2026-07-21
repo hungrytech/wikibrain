@@ -27,8 +27,12 @@ CORPUS_VERSION = "second-brain-corpus-v1"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _normalized_file_bytes(path: Path) -> bytes:
+    return path.read_text(encoding="utf-8").replace("\r\n", "\n").encode("utf-8")
+
+
 def _file_sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return hashlib.sha256(_normalized_file_bytes(path)).hexdigest()
 
 
 def source_manifest_sha256() -> str:
@@ -41,9 +45,9 @@ def source_manifest_sha256() -> str:
     ]
     digest = hashlib.sha256()
     for path in paths:
-        digest.update(str(path.relative_to(REPOSITORY_ROOT)).encode("utf-8"))
+        digest.update(path.relative_to(REPOSITORY_ROOT).as_posix().encode("utf-8"))
         digest.update(b"\0")
-        digest.update(path.read_bytes())
+        digest.update(_normalized_file_bytes(path))
         digest.update(b"\0")
     return digest.hexdigest()
 

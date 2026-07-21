@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import runpy
 import tempfile
@@ -15,6 +14,7 @@ BENCHMARK_GLOBALS = runpy.run_path(
     str(ROOT / "benchmarks" / "second_brain.py")
 )
 run_benchmark: Callable[..., dict[str, Any]] = BENCHMARK_GLOBALS["run_benchmark"]
+file_sha256: Callable[[Path], str] = BENCHMARK_GLOBALS["_file_sha256"]
 source_manifest_sha256: Callable[[], str] = BENCHMARK_GLOBALS[
     "source_manifest_sha256"
 ]
@@ -36,6 +36,15 @@ class SecondBrainBenchmarkTests(unittest.TestCase):
         self.assertGreater(result["latency_ms"]["p50"], 0)
         self.assertTrue(all(case["passed"] for case in result["cases"]))
 
+    def test_provenance_hash_normalizes_checkout_line_endings(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            lf = root / "lf.txt"
+            crlf = root / "crlf.txt"
+            lf.write_bytes(b"alpha\nbeta\n")
+            crlf.write_bytes(b"alpha\r\nbeta\r\n")
+            self.assertEqual(file_sha256(lf), file_sha256(crlf))
+
     def test_committed_result_has_verifiable_provenance(self) -> None:
         runner = ROOT / "benchmarks" / "second_brain.py"
         result_path = ROOT / "benchmarks" / "results" / "second-brain-v1.json"
@@ -47,7 +56,7 @@ class SecondBrainBenchmarkTests(unittest.TestCase):
         self.assertEqual(provenance["latency_queries"], 4)
         self.assertEqual(result["latency_ms"]["samples"], 80)
         self.assertEqual(
-            provenance["runner_sha256"], hashlib.sha256(runner.read_bytes()).hexdigest()
+            provenance["runner_sha256"], file_sha256(runner)
         )
         self.assertEqual(
             provenance["source_manifest_sha256"], source_manifest_sha256()

@@ -10,18 +10,18 @@
   "score_percent": 100.0,
   "latency_ms": {
     "samples": 80,
-    "p50": 24.25,
-    "p95": 26.51
+    "p50": 24.35,
+    "p95": 26.78
   },
   "provenance": {
-    "generated_at": "2026-07-21T02:14:10+00:00",
+    "generated_at": "2026-07-21T02:20:33+00:00",
     "corpus_version": "second-brain-corpus-v1",
     "latency_iterations": 20,
     "latency_queries": 4,
-    "runner_sha256": "5b3dfb63aa620d6839cf950949dad6807d217af5efa74c432520b0cd424748fb",
-    "source_manifest_sha256": "8dab0e3998d292221ca7c779dc0ac88b71be0ba6c20d264a5d94673efd44f73c",
-    "git_commit": "a03e6908a02b89c0a5f7f602c0c836e01e274b7a",
-    "git_dirty": false,
+    "runner_sha256": "9f890ccc3f1e98111fca2eff50d63c1d2ab68819dcdefebc2aae737cbedbb47c",
+    "source_manifest_sha256": "f14b826b3ef066b6bfbc50b6a986a8c85cabe6ea7defa999a39641ec28485ea6",
+    "git_commit": "041009b3819abd153e0f46b0753c86927b32b5d7",
+    "git_dirty": true,
     "reproduction_command": "uv run python -m benchmarks.second_brain --wikimap wikimap --iterations 20 --format json --output benchmarks/results/second-brain-v1.json"
   },
   "cases": [

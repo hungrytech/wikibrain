@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="540" viewBox="0 0 1000 540" role="img" aria-labelledby="title desc">
+<title>WikiBrain retrieval quality benchmark</title>
+<desc>Retrieval quality across 12 labeled queries: Recall@1 69.44%, Recall@3 87.50%, nDCG@3 81.35%, MRR 87.50%, Top-1 source match 83.33%. 14 of 14 documents were accepted; forbidden exposure was 0.00%.</desc>
+<style>
+  .bg { fill: #0d1117; }
+  .panel { fill: #161b22; stroke: #30363d; stroke-width: 1; }
+  .title { fill: #f0f6fc; font: 700 30px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  .subtitle { fill: #8b949e; font: 14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  .section { fill: #c9d1d9; font: 700 16px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  .label { fill: #c9d1d9; font: 14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  .value { fill: #f0f6fc; font: 700 14px ui-monospace,SFMono-Regular,Consolas,monospace; }
+  .track { fill: #30363d; }
+  .bar { fill: #58a6ff; }
+  .card-value { fill: #3fb950; font: 700 21px ui-monospace,SFMono-Regular,Consolas,monospace; }
+  .card-label { fill: #8b949e; font: 12px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  .footer { fill: #6e7681; font: 11px ui-monospace,SFMono-Regular,Consolas,monospace; }
+</style>
+<rect width="1000" height="540" rx="18" class="bg"/>
+<rect x="24" y="24" width="952" height="492" rx="14" class="panel"/>
+<text x="48" y="68" class="title">Retrieval quality</text>
+<text x="48" y="96" class="subtitle">Ranked relevance · source identity · workspace, stale, and deleted-memory suppression</text>
+<text x="48" y="128" class="section">Search quality</text>
+<text x="48" y="165" class="label">Recall@1</text><rect x="250" y="148" width="560" height="24" rx="6" class="track"/><rect x="250" y="148" width="388.89" height="24" rx="6" class="bar"/><text x="830" y="165" class="value">69.44%</text><text x="48" y="211" class="label">Recall@3</text><rect x="250" y="194" width="560" height="24" rx="6" class="track"/><rect x="250" y="194" width="490.00" height="24" rx="6" class="bar"/><text x="830" y="211" class="value">87.50%</text><text x="48" y="257" class="label">nDCG@3</text><rect x="250" y="240" width="560" height="24" rx="6" class="track"/><rect x="250" y="240" width="455.56" height="24" rx="6" class="bar"/><text x="830" y="257" class="value">81.35%</text><text x="48" y="303" class="label">MRR</text><rect x="250" y="286" width="560" height="24" rx="6" class="track"/><rect x="250" y="286" width="490.00" height="24" rx="6" class="bar"/><text x="830" y="303" class="value">87.50%</text><text x="48" y="349" class="label">Top-1 source match</text><rect x="250" y="332" width="560" height="24" rx="6" class="track"/><rect x="250" y="332" width="466.67" height="24" rx="6" class="bar"/><text x="830" y="349" class="value">83.33%</text>
+<text x="48" y="394" class="section">Ingestion integrity &amp; safety</text>
+<rect x="48" y="410" width="205" height="70" rx="9" class="panel"/>
+<text x="66" y="441" class="card-value">14 / 14</text>
+<text x="66" y="462" class="card-label">Accepted documents</text>
+<rect x="268" y="410" width="205" height="70" rx="9" class="panel"/>
+<text x="286" y="441" class="card-value">100.00%</text>
+<text x="286" y="462" class="card-label">Source content present</text>
+<rect x="488" y="410" width="205" height="70" rx="9" class="panel"/>
+<text x="506" y="441" class="card-value">0.00%</text>
+<text x="506" y="462" class="card-label">Forbidden exposure</text>
+<rect x="708" y="410" width="220" height="70" rx="9" class="panel"/>
+<text x="726" y="441" class="card-value">clean</text>
+<text x="726" y="462" class="card-label">Index state · deleted 1</text>
+<text x="48" y="502" class="footer">retrieval-quality-corpus-v1 · 12 queries · wikimap 1.1.0 · result f1e30dca2a13</text>
+</svg>

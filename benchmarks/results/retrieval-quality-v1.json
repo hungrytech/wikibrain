@@ -1,0 +1,188 @@
+{
+  "benchmark_version": "retrieval-quality-v1",
+  "corpus_version": "retrieval-quality-corpus-v1",
+  "ingestion": {
+    "requested_documents": 14,
+    "accepted_documents": 14,
+    "acceptance_rate": 1.0,
+    "source_content_presence_rate": 1.0,
+    "registered_documents": 13,
+    "deleted_documents": 1,
+    "index_clean": true
+  },
+  "quality": {
+    "query_count": 12,
+    "recall_at_1": 0.6944444444444445,
+    "ndcg_at_1": 0.7619047619047619,
+    "recall_at_3": 0.875,
+    "ndcg_at_3": 0.8134979486632519,
+    "recall_at_5": 0.875,
+    "ndcg_at_5": 0.8134979486632519,
+    "mrr": 0.875,
+    "top1_source_match": 0.8333333333333334,
+    "forbidden_query_rate": 0.0,
+    "violations": {}
+  },
+  "query_engines": {
+    "wikimap": 12
+  },
+  "queries": [
+    {
+      "query_id": "exact-change-ticket",
+      "engine": "wikimap",
+      "retrieved": [
+        {
+          "rank": 1,
+          "document_id": "atlas-deploy"
+        }
+      ]
+    },
+    {
+      "query_id": "deployment-location-paraphrase",
+      "engine": "wikimap",
+      "retrieved": [
+        {
+          "rank": 1,
+          "document_id": "atlas-slo"
+        }
+      ]
+    },
+    {
+      "query_id": "release-owner",
+      "engine": "wikimap",
+      "retrieved": [
+        {
+          "rank": 1,
+          "document_id": "atlas-release-evidence"
+        }
+      ]
+    },
+    {
+      "query_id": "backup-reviewer",
+      "engine": "wikimap",
+      "retrieved": [
+        {
+          "rank": 1,
+          "document_id": "atlas-release-owner"
+        }
+      ]
+    },
+    {
+      "query_id": "backup-retention",
+      "engine": "wikimap",
+      "retrieved": [
+        {
+          "rank": 1,
+          "document_id": "atlas-database-backup"
+        },
+        {
+          "rank": 2,
+          "document_id": "atlas-restart-runbook"
+        }
+      ]
+    },
+    {
+      "query_id": "retry-policy",
+      "engine": "wikimap",
+      "retrieved": [
+        {
+          "rank": 1,
+          "document_id": "atlas-api-resilience"
+        },
+        {
+          "rank": 2,
+          "document_id": "global-timezone"
+        }
+      ]
+    },
+    {
+      "query_id": "latency-objective",
+      "engine": "wikimap",
+      "retrieved": [
+        {
+          "rank": 1,
+          "document_id": "global-timezone"
+        },
+        {
+          "rank": 2,
+          "document_id": "atlas-slo"
+        }
+      ]
+    },
+    {
+      "query_id": "recovery-order",
+      "engine": "wikimap",
+      "retrieved": [
+        {
+          "rank": 1,
+          "document_id": "atlas-restart-runbook"
+        },
+        {
+          "rank": 2,
+          "document_id": "atlas-release-evidence"
+        }
+      ]
+    },
+    {
+      "query_id": "current-package-manager",
+      "engine": "wikimap",
+      "retrieved": [
+        {
+          "rank": 1,
+          "document_id": "atlas-package-current"
+        }
+      ]
+    },
+    {
+      "query_id": "status-style",
+      "engine": "wikimap",
+      "retrieved": [
+        {
+          "rank": 1,
+          "document_id": "global-report-style"
+        }
+      ]
+    },
+    {
+      "query_id": "default-timezone",
+      "engine": "wikimap",
+      "retrieved": [
+        {
+          "rank": 1,
+          "document_id": "global-timezone"
+        }
+      ]
+    },
+    {
+      "query_id": "release-readiness-multi",
+      "engine": "wikimap",
+      "retrieved": [
+        {
+          "rank": 1,
+          "document_id": "atlas-release-owner"
+        },
+        {
+          "rank": 2,
+          "document_id": "atlas-release-evidence"
+        },
+        {
+          "rank": 3,
+          "document_id": "atlas-restart-runbook"
+        }
+      ]
+    }
+  ],
+  "wikimap_version": "wikimap 1.1.0",
+  "generated_at": "2026-07-21T04:58:56.198539+00:00",
+  "environment": {
+    "machine": "arm64",
+    "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "python": "3.13.11"
+  },
+  "provenance": {
+    "corpus_sha256": "74f51686d2b63298688dd87d5e083789a40613800a8428df6446f767f1c42e41",
+    "source_manifest_sha256": "4335c09ba336f9d50d83272e2d080f594240c367486d6009d7204cfc08c29964",
+    "git_commit": "c4c5e64328ef78b65fafd3e0eb7b8230644c3995",
+    "git_dirty": false
+  }
+}

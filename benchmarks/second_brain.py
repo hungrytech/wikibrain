@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import platform
+import shlex
 import shutil
 import statistics
+import subprocess
 import tempfile
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +23,52 @@ from wikibrain.wikimap_adapter import WikimapAdapter
 
 
 BENCHMARK_VERSION = "second-brain-v1"
+CORPUS_VERSION = "second-brain-corpus-v1"
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def source_manifest_sha256() -> str:
+    """Hash benchmark behavior and production sources, excluding result artifacts."""
+    paths = [
+        REPOSITORY_ROOT / "pyproject.toml",
+        REPOSITORY_ROOT / "uv.lock",
+        Path(__file__).resolve(),
+        *sorted((REPOSITORY_ROOT / "src" / "wikibrain").glob("*.py")),
+    ]
+    digest = hashlib.sha256()
+    for path in paths:
+        digest.update(str(path.relative_to(REPOSITORY_ROOT)).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _git_metadata() -> tuple[str, bool]:
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=REPOSITORY_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        dirty = bool(
+            subprocess.run(
+                ["git", "status", "--porcelain=v1"],
+                cwd=REPOSITORY_ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+        )
+        return commit, dirty
+    except (OSError, subprocess.CalledProcessError):
+        return "unavailable", True
 
 
 def _percentile(values: list[float], percentile: float) -> float:
@@ -268,6 +318,24 @@ def run_benchmark(
             latencies.append((time.perf_counter() - started) * 1_000)
 
     passed = sum(1 for case in cases if case["passed"])
+    git_commit, git_dirty = _git_metadata()
+    reproduction_command = shlex.join(
+        [
+            "uv",
+            "run",
+            "python",
+            "-m",
+            "benchmarks.second_brain",
+            "--wikimap",
+            Path(wikimap_command).name,
+            "--iterations",
+            str(latency_iterations),
+            "--format",
+            "json",
+            "--output",
+            "benchmarks/results/second-brain-v1.json",
+        ]
+    )
     return {
         "benchmark": BENCHMARK_VERSION,
         "retrieval_mode": "query-only",
@@ -282,6 +350,17 @@ def run_benchmark(
             "samples": len(latencies),
             "p50": round(statistics.median(latencies), 2),
             "p95": round(_percentile(latencies, 0.95), 2),
+        },
+        "provenance": {
+            "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
+            "corpus_version": CORPUS_VERSION,
+            "latency_iterations": latency_iterations,
+            "latency_queries": len(latency_queries),
+            "runner_sha256": _file_sha256(Path(__file__).resolve()),
+            "source_manifest_sha256": source_manifest_sha256(),
+            "git_commit": git_commit,
+            "git_dirty": git_dirty,
+            "reproduction_command": reproduction_command,
         },
         "cases": cases,
     }

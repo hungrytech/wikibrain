@@ -60,12 +60,14 @@ Measured on macOS arm64 with Python 3.13.11 and Wikimap 1.1.0:
 | Claude → Codex handoff | a Claude session fact appears at Codex session start | PASS |
 
 **Result: 8/8 checks (100%).** For 80 measured recall calls over the fixed
-corpus, latency was **24.09 ms p50** and **26.49 ms p95**. The committed
+corpus, latency was **24.29 ms p50** and **27.84 ms p95**. The committed
 functional result records Python 3.13.11 and Wikimap 1.1.0; supported Wikimap 1.x
 versions may rank differently. Latency is a machine- and run-dependent
 measurement, not a stable performance guarantee. The machine-readable result is
 stored at
 [`benchmarks/results/second-brain-v1.json`](benchmarks/results/second-brain-v1.json).
+CI verifies its corpus version, iteration count, runner SHA-256, source-manifest
+SHA-256, Git commit, generation time, and portable reproduction command.
 
 ### What this benchmark exposed and changed
 

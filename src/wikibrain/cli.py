@@ -541,23 +541,18 @@ def _erase_owned_paths(config: BrainConfig, values: list[str]) -> None:
             raise RuntimeError(f"could not erase owned memory file: {path}") from error
 
 
-def _remove_forgotten_relation_targets(
-    curator: Curator,
-    receipts: list[dict[str, Any]],
-    *,
-    default_target_document_id: str | None = None,
-) -> None:
-    for receipt in receipts:
-        for relation in receipt.get("removed_incoming_relations", []):
-            if not isinstance(relation, dict) or not relation.get("path"):
-                continue
-            target_document_id = (
-                relation.get("target_document_id") or default_target_document_id
-            )
-            if target_document_id:
-                curator.remove_relation_target(
-                    Path(str(relation["path"])), str(target_document_id)
-                )
+def _drain_relation_cleanup_outbox(curator: Curator, store: BrainStore) -> int:
+    completed = 0
+    while True:
+        pending = store.pending_relation_cleanups()
+        if not pending:
+            return completed
+        for cleanup in pending:
+            source_path = str(cleanup["source_path"])
+            target_document_id = str(cleanup["target_document_id"])
+            curator.remove_relation_target(Path(source_path), target_document_id)
+            store.complete_relation_cleanup(source_path, target_document_id)
+            completed += 1
 
 
 def command_forget(args: argparse.Namespace, home: Path) -> int:
@@ -650,14 +645,11 @@ def command_forget(args: argparse.Namespace, home: Path) -> int:
         store,
         WikimapAdapter(config.vault_path, config.wikimap_command),
     )
-    _remove_forgotten_relation_targets(
-        curator,
-        [receipt],
-        default_target_document_id=getattr(args, "document", None),
-    )
+    relation_cleanups = _drain_relation_cleanup_outbox(curator, store)
     store.checkpoint()
     index_updated = curator.update_index()
     receipt["index_updated"] = index_updated
+    receipt["relation_cleanups"] = relation_cleanups
     receipt_path = (
         config.home_path
         / "receipts"
@@ -685,6 +677,7 @@ def command_retention(args: argparse.Namespace, home: Path) -> int:
     ]
     raw_evidence = store.expired_raw_evidence_counts(before)
     raw_count = sum(raw_evidence.values())
+    pending_relation_cleanups = len(store.pending_relation_cleanups())
     preview = {
         "status": "ok",
         "days": days,
@@ -698,10 +691,13 @@ def command_retention(args: argparse.Namespace, home: Path) -> int:
             for row in rows
         ],
         "raw_evidence": raw_evidence,
+        "pending_relation_cleanups": pending_relation_cleanups,
         "count": len(rows) + raw_count,
         "dry_run": not args.apply,
     }
-    if not args.apply or (not rows and raw_count == 0):
+    if not args.apply or (
+        not rows and raw_count == 0 and pending_relation_cleanups == 0
+    ):
         _emit(preview, args.json)
         return 0
 
@@ -726,7 +722,7 @@ def command_retention(args: argparse.Namespace, home: Path) -> int:
         store,
         WikimapAdapter(config.vault_path, config.wikimap_command),
     )
-    _remove_forgotten_relation_targets(curator, receipts)
+    relation_cleanups = _drain_relation_cleanup_outbox(curator, store)
     store.checkpoint()
     index_updated = curator.update_index()
     preview.update(
@@ -734,6 +730,7 @@ def command_retention(args: argparse.Namespace, home: Path) -> int:
             "dry_run": False,
             "deleted": len(receipts) + sum(raw_deleted.values()),
             "raw_deleted": raw_deleted,
+            "relation_cleanups": relation_cleanups,
             "index_updated": index_updated,
         }
     )

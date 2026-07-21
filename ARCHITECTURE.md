@@ -75,9 +75,12 @@ to same-workspace evidence with `relates-to` or replace stale guidance with
 `supersedes`; recall follows supporting links one hop and omits superseded
 memories. If a newer memory is forgotten, a compact SQLite supersession
 tombstone keeps its stale predecessor suppressed. Forgetting a relation target
-also removes the dangling ID from surviving Markdown frontmatter. Promotion
-into system instructions, `AGENTS.md`, `CLAUDE.md`, or skills is never
-automatic.
+also removes the dangling ID from surviving Markdown frontmatter. Schema v6
+queues that cleanup in a durable SQLite outbox in the same transaction as the
+deletion; YAML-aware atomic edits are acknowledged only after success, so an
+interrupted retention run retries the cleanup instead of leaving permanent
+SQLite/Markdown drift. Promotion into system instructions, `AGENTS.md`,
+`CLAUDE.md`, or skills is never automatic.
 
 ## Privacy
 

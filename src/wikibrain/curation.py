@@ -8,6 +8,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import yaml
+from yaml.nodes import MappingNode, ScalarNode, SequenceNode
+
 from .config import BrainConfig, atomic_write_text
 from .redaction import redact_text
 from .storage import (
@@ -173,37 +176,49 @@ captured_at: {_yaml_string(now.isoformat(timespec="milliseconds"))}
         if end < 0:
             raise ValueError(f"relation source has malformed frontmatter: {relative}")
         frontmatter = text[4:end]
-        changed = False
-        lines: list[str] = []
-        for line in frontmatter.splitlines():
-            match = re.fullmatch(r"(relates_to|supersedes):\s*(\[.*\])", line)
-            if match is None:
-                lines.append(line)
+        try:
+            root = yaml.compose(frontmatter, Loader=yaml.SafeLoader)
+        except yaml.YAMLError as error:
+            raise ValueError(f"malformed frontmatter in {relative}") from error
+        if not isinstance(root, MappingNode):
+            raise ValueError(f"relation source has non-mapping frontmatter: {relative}")
+
+        replacements: list[tuple[int, int, str]] = []
+        for key_node, value_node in root.value:
+            if not isinstance(key_node, ScalarNode) or key_node.value not in {
+                "relates_to",
+                "supersedes",
+            }:
                 continue
-            try:
-                values = json.loads(match.group(2))
-            except json.JSONDecodeError as error:
-                raise ValueError(
-                    f"malformed relation list in {relative}: {match.group(1)}"
-                ) from error
-            if not isinstance(values, list) or not all(
-                isinstance(value, str) for value in values
+            field = key_node.value
+            if not isinstance(value_node, SequenceNode) or not all(
+                isinstance(value, ScalarNode)
+                and value.tag == "tag:yaml.org,2002:str"
+                for value in value_node.value
             ):
-                raise ValueError(
-                    f"malformed relation list in {relative}: {match.group(1)}"
-                )
+                raise ValueError(f"malformed relation list in {relative}: {field}")
+            if value_node.start_mark.index < key_node.end_mark.index:
+                raise ValueError(f"unsupported relation alias in {relative}: {field}")
+            values = [value.value for value in value_node.value]
             remaining = [value for value in values if value != target_document_id]
             if len(remaining) == len(values):
-                lines.append(line)
                 continue
-            changed = True
-            if remaining:
-                rendered = ", ".join(_yaml_string(value) for value in remaining)
-                lines.append(f"{match.group(1)}: [{rendered}]")
-        if changed:
-            updated = "---\n" + "\n".join(lines) + text[end:]
-            self._write(relative, updated)
-        return changed
+            rendered = "[" + ", ".join(_yaml_string(value) for value in remaining) + "]"
+            if value_node.start_mark.line > key_node.start_mark.line:
+                rendered += "\n"
+            replacements.append(
+                (value_node.start_mark.index, value_node.end_mark.index, rendered)
+            )
+
+        if not replacements:
+            return False
+        updated_frontmatter = frontmatter
+        for start, finish, rendered in sorted(replacements, reverse=True):
+            updated_frontmatter = (
+                updated_frontmatter[:start] + rendered + updated_frontmatter[finish:]
+            )
+        self._write(relative, "---\n" + updated_frontmatter + text[end:])
+        return True
 
     def remember(
         self,

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import closing, redirect_stdout
 from io import StringIO
 from pathlib import Path
+from unittest import mock
+
+import yaml
 
 from wikibrain.cli import main
 from wikibrain.config import BrainConfig
@@ -175,6 +179,74 @@ class MemoryRelationTests(unittest.TestCase):
             self.assertNotIn(
                 target_id, source_path.read_text(encoding="utf-8")
             )
+
+    def test_retention_retries_multiline_yaml_relation_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace = root / "project"
+            workspace.mkdir()
+            config, store, curator = self.make_brain(root, [workspace])
+            target_id, _ = curator.remember(
+                "Expired supporting evidence.", workspace=str(workspace)
+            )
+            _, source_path = curator.remember(
+                "Current decision.",
+                workspace=str(workspace),
+                relates_to=[target_id],
+                supersedes=[target_id],
+            )
+            text = source_path.read_text(encoding="utf-8")
+            text = text.replace(
+                f'relates_to: ["{target_id}"]',
+                f"relates_to:\n  - '{target_id}'",
+            ).replace(
+                f'supersedes: ["{target_id}"]',
+                f"supersedes: [ '{target_id}' ]",
+            )
+            source_path.write_text(text, encoding="utf-8")
+            with store.connect() as connection:
+                connection.execute(
+                    """
+                    UPDATE documents SET kind = 'handoff', created_at = ?
+                    WHERE document_id = ?
+                    """,
+                    ("2000-01-01T00:00:00+00:00", target_id),
+                )
+
+            arguments = [
+                "--home",
+                str(config.home_path),
+                "retention",
+                "--days",
+                "1",
+                "--apply",
+                "--json",
+            ]
+            with mock.patch.object(
+                Curator,
+                "remove_relation_target",
+                side_effect=OSError("simulated cleanup failure"),
+            ):
+                with redirect_stdout(StringIO()):
+                    first_code = main(arguments)
+
+            self.assertEqual(first_code, 1)
+            self.assertIsNone(store.document(target_id))
+            self.assertIn(target_id, source_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(store.pending_relation_cleanups()), 1)
+
+            with redirect_stdout(StringIO()):
+                retry_code = main(arguments)
+
+            self.assertEqual(retry_code, 0)
+            updated = source_path.read_text(encoding="utf-8")
+            self.assertNotIn(target_id, updated)
+            frontmatter = updated.split("---\n", 2)[1]
+            metadata = yaml.safe_load(frontmatter)
+            self.assertEqual(metadata["relates_to"], [])
+            self.assertEqual(metadata["supersedes"], [])
+            self.assertIn("# Current decision", updated)
+            self.assertEqual(store.pending_relation_cleanups(), [])
 
     def test_forgetting_superseder_does_not_revive_stale_memory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -369,9 +441,72 @@ class MemoryRelationTests(unittest.TestCase):
                     WHERE type = 'table' AND name = 'supersession_tombstones'
                     """
                 ).fetchone()
-            self.assertEqual(version, "5")
+            self.assertEqual(version, "6")
             self.assertIsNotNone(table)
             self.assertIsNotNone(migrated.document(document_id))
+
+    def test_future_schema_is_rejected_without_downgrade(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "brain.db"
+            store = BrainStore(path)
+            with store.connect() as connection:
+                connection.execute(
+                    "UPDATE metadata SET value = '999' WHERE key = 'schema_version'"
+                )
+
+            with self.assertRaisesRegex(RuntimeError, "newer than supported"):
+                BrainStore(path)
+            with closing(sqlite3.connect(path)) as connection:
+                version = connection.execute(
+                    "SELECT value FROM metadata WHERE key = 'schema_version'"
+                ).fetchone()[0]
+            self.assertEqual(version, "999")
+
+    def test_v5_migration_backfills_cleanup_from_tombstone_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace = root / "project"
+            workspace.mkdir()
+            config, store, curator = self.make_brain(root, [workspace])
+            target_id, _ = curator.remember("Old evidence", workspace=str(workspace))
+            _, source_path = curator.remember(
+                "Current decision",
+                workspace=str(workspace),
+                relates_to=[target_id],
+            )
+            store.forget_document(target_id, "simulate-v5-crash")
+            with store.connect() as connection:
+                connection.execute("DELETE FROM relation_cleanup_outbox")
+                connection.execute(
+                    "UPDATE metadata SET value = '5' WHERE key = 'schema_version'"
+                )
+
+            migrated = BrainStore(config.database_path)
+            pending = migrated.pending_relation_cleanups()
+            self.assertEqual(len(pending), 1)
+            self.assertEqual(pending[0]["source_path"], str(source_path))
+            self.assertEqual(pending[0]["target_document_id"], target_id)
+
+    def test_malformed_existing_table_does_not_advance_schema_version(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "brain.db"
+            store = BrainStore(path)
+            with store.connect() as connection:
+                connection.execute("DROP TABLE supersession_tombstones")
+                connection.execute(
+                    "CREATE TABLE supersession_tombstones (wrong_column TEXT)"
+                )
+                connection.execute(
+                    "UPDATE metadata SET value = '4' WHERE key = 'schema_version'"
+                )
+
+            with self.assertRaisesRegex(RuntimeError, "invalid schema"):
+                BrainStore(path)
+            with closing(sqlite3.connect(path)) as connection:
+                version = connection.execute(
+                    "SELECT value FROM metadata WHERE key = 'schema_version'"
+                ).fetchone()[0]
+            self.assertEqual(version, "4")
 
 
 if __name__ == "__main__":

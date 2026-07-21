@@ -14,7 +14,7 @@ from .config import PRIVATE_FILE_MODE, ensure_private_directory
 from .models import NormalizedEvent
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 class ClosingConnection(sqlite3.Connection):
@@ -122,8 +122,30 @@ class BrainStore:
 
     def initialize(self) -> None:
         with self.connect() as connection:
+            existing_version = 0
+            metadata_exists = connection.execute(
+                """
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name = 'metadata'
+                """
+            ).fetchone()
+            if metadata_exists:
+                row = connection.execute(
+                    "SELECT value FROM metadata WHERE key = 'schema_version'"
+                ).fetchone()
+                if row is not None:
+                    try:
+                        existing_version = int(row["value"])
+                    except (TypeError, ValueError) as error:
+                        raise RuntimeError("invalid schema version metadata") from error
+                    if existing_version > SCHEMA_VERSION:
+                        raise RuntimeError(
+                            f"database schema {existing_version} is newer than supported "
+                            f"version {SCHEMA_VERSION}"
+                        )
             connection.executescript(
                 """
+                BEGIN IMMEDIATE;
                 CREATE TABLE IF NOT EXISTS metadata (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
@@ -245,6 +267,13 @@ class BrainStore:
                         REFERENCES documents(document_id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS relation_cleanup_outbox (
+                    source_path TEXT NOT NULL,
+                    target_document_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (source_path, target_document_id)
+                );
+
                 CREATE TABLE IF NOT EXISTS tombstones (
                     tombstone_id TEXT PRIMARY KEY,
                     selector TEXT NOT NULL UNIQUE,
@@ -263,6 +292,9 @@ class BrainStore:
                     ON events(provider, session_id, created_at);
                 """
             )
+            if existing_version < 6:
+                self._backfill_relation_cleanups(connection)
+            self._validate_schema(connection)
             connection.execute(
                 "INSERT OR REPLACE INTO metadata(key, value) VALUES('schema_version', ?)",
                 (str(SCHEMA_VERSION),),
@@ -278,6 +310,161 @@ class BrainStore:
             os.chmod(self.path, PRIVATE_FILE_MODE)
         except OSError:
             pass
+
+    @staticmethod
+    def _backfill_relation_cleanups(connection: sqlite3.Connection) -> None:
+        rows = connection.execute("SELECT receipt_json FROM tombstones").fetchall()
+        for row in rows:
+            try:
+                receipt = json.loads(str(row["receipt_json"]))
+            except (TypeError, json.JSONDecodeError):
+                continue
+            for relation in receipt.get("removed_incoming_relations", []):
+                if not isinstance(relation, dict):
+                    continue
+                source_path = relation.get("path")
+                target_document_id = relation.get("target_document_id")
+                if not source_path or not target_document_id:
+                    continue
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO relation_cleanup_outbox(
+                        source_path, target_document_id, created_at
+                    ) VALUES (?, ?, ?)
+                    """,
+                    (str(source_path), str(target_document_id), utc_now()),
+                )
+
+    @staticmethod
+    def _validate_schema(connection: sqlite3.Connection) -> None:
+        required_columns = {
+            "metadata": {"key", "value"},
+            "sessions": {
+                "provider",
+                "session_id",
+                "cwd",
+                "started_at",
+                "updated_at",
+            },
+            "turns": {
+                "id",
+                "provider",
+                "session_id",
+                "turn_key",
+                "cwd",
+                "prompt",
+                "response",
+                "prompt_hash",
+                "created_at",
+                "completed_at",
+                "document_id",
+                "redaction_count",
+            },
+            "events": {
+                "event_key",
+                "provider",
+                "session_id",
+                "turn_key",
+                "name",
+                "cwd",
+                "metadata_json",
+                "created_at",
+            },
+            "tool_pointers": {
+                "event_key",
+                "provider",
+                "session_id",
+                "turn_key",
+                "tool_name",
+                "pointer_json",
+                "created_at",
+            },
+            "handoff_outbox": {
+                "event_key",
+                "provider",
+                "session_id",
+                "workspace",
+                "summary",
+                "redaction_count",
+                "created_at",
+                "document_id",
+            },
+            "promotion_outbox": {
+                "provider",
+                "session_id",
+                "turn_key",
+                "created_at",
+            },
+            "documents": {
+                "document_id",
+                "kind",
+                "path",
+                "provider",
+                "session_id",
+                "turn_key",
+                "workspace",
+                "created_at",
+                "metadata_json",
+            },
+            "document_relations": {
+                "source_document_id",
+                "relation_type",
+                "target_document_id",
+                "created_at",
+            },
+            "supersession_tombstones": {
+                "target_document_id",
+                "superseder_document_id",
+                "created_at",
+            },
+            "relation_cleanup_outbox": {
+                "source_path",
+                "target_document_id",
+                "created_at",
+            },
+            "tombstones": {
+                "tombstone_id",
+                "selector",
+                "reason",
+                "created_at",
+                "receipt_json",
+            },
+        }
+        for table, required in required_columns.items():
+            columns = {
+                str(row["name"])
+                for row in connection.execute(f'PRAGMA table_info("{table}")')
+            }
+            missing = required - columns
+            if missing:
+                raise RuntimeError(
+                    f"invalid schema for {table}; missing columns: "
+                    + ", ".join(sorted(missing))
+                )
+        required_foreign_keys = {
+            "document_relations": {
+                ("source_document_id", "documents", "document_id", "CASCADE"),
+                ("target_document_id", "documents", "document_id", "CASCADE"),
+            },
+            "supersession_tombstones": {
+                ("target_document_id", "documents", "document_id", "CASCADE"),
+            },
+        }
+        for table, required in required_foreign_keys.items():
+            actual = {
+                (
+                    str(row["from"]),
+                    str(row["table"]),
+                    str(row["to"]),
+                    str(row["on_delete"]),
+                )
+                for row in connection.execute(f'PRAGMA foreign_key_list("{table}")')
+            }
+            missing = required - actual
+            if missing:
+                raise RuntimeError(f"invalid foreign keys for {table}")
+        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            raise RuntimeError("invalid schema: foreign key check failed")
 
     @staticmethod
     def _has_tombstone(connection: sqlite3.Connection, selector: str) -> bool:
@@ -302,6 +489,23 @@ class BrainStore:
             connection,
             f"session:{session_id}",
         )
+
+    @staticmethod
+    def _queue_relation_cleanups(
+        connection: sqlite3.Connection,
+        rows: list[sqlite3.Row],
+        target_document_id: str | None = None,
+    ) -> None:
+        for row in rows:
+            target = target_document_id or str(row["target_document_id"])
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO relation_cleanup_outbox(
+                    source_path, target_document_id, created_at
+                ) VALUES (?, ?, ?)
+                """,
+                (str(row["path"]), target, utc_now()),
+            )
 
     @staticmethod
     def _mark_dirty(connection: sqlite3.Connection) -> None:
@@ -1198,6 +1402,32 @@ class BrainStore:
             ).fetchone()
             return json.loads(row["receipt_json"]) if row else None
 
+    def pending_relation_cleanups(self, limit: int = 1_000) -> list[sqlite3.Row]:
+        with self.connect() as connection:
+            return list(
+                connection.execute(
+                    """
+                    SELECT source_path, target_document_id, created_at
+                    FROM relation_cleanup_outbox
+                    ORDER BY created_at, source_path, target_document_id
+                    LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+            )
+
+    def complete_relation_cleanup(
+        self, source_path: str, target_document_id: str
+    ) -> None:
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                DELETE FROM relation_cleanup_outbox
+                WHERE source_path = ? AND target_document_id = ?
+                """,
+                (source_path, target_document_id),
+            )
+
     def forget_document(self, document_id: str, reason: str) -> dict[str, Any]:
         selector = f"document:{document_id}"
         with self.transaction() as connection:
@@ -1225,6 +1455,7 @@ class BrainStore:
                 if row
                 else []
             )
+            self._queue_relation_cleanups(connection, incoming_rows, document_id)
             receipt = {
                 "selector": selector,
                 "found": bool(row),
@@ -1432,6 +1663,7 @@ class BrainStore:
                 """,
                 (provider, session_id),
             ).fetchall()
+            self._queue_relation_cleanups(connection, incoming_rows)
             paths = list(
                 dict.fromkeys(
                     [
@@ -1526,6 +1758,7 @@ class BrainStore:
                 "documents",
                 "document_relations",
                 "supersession_tombstones",
+                "relation_cleanup_outbox",
                 "tombstones",
             ):
                 result[table] = int(

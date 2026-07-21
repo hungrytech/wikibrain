@@ -33,6 +33,19 @@ class SecondBrainBenchmarkTests(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
+    def test_chart_distinguishes_failed_checks_without_color_alone(self) -> None:
+        result_path = ROOT / "benchmarks" / "results" / "second-brain-v1.json"
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+        result["cases"][0]["passed"] = False
+        renderer = runpy.run_path(
+            str(ROOT / "scripts" / "render_benchmark_chart.py")
+        )["render_chart"]
+
+        svg = renderer(result)
+
+        self.assertIn("Failed checks: Current decision.", svg)
+        self.assertIn('stroke="#ffffff"', svg)
+
     def test_readme_benchmark_values_match_committed_result(self) -> None:
         result_path = ROOT / "benchmarks" / "results" / "second-brain-v1.json"
         result = json.loads(result_path.read_text(encoding="utf-8"))
@@ -42,11 +55,45 @@ class SecondBrainBenchmarkTests(unittest.TestCase):
         total = int(result["checks_total"])
 
         expected_values = (f"{p50:.2f}", f"{p95:.2f}", f"{passed}/{total}")
-        for readme_name in ("README.md", "README.ko.md"):
+        for readme_name in (
+            "README.md",
+            "README.ko.md",
+            "README.ja.md",
+            "README.zh-CN.md",
+        ):
             readme = (ROOT / readme_name).read_text(encoding="utf-8")
             with self.subTest(readme=readme_name):
                 for value in expected_values:
                     self.assertIn(value, readme)
+
+    def test_readme_navigation_and_sections_are_in_sync(self) -> None:
+        readme_names = (
+            "README.md",
+            "README.ko.md",
+            "README.ja.md",
+            "README.zh-CN.md",
+        )
+        anchor_ids = (
+            "why-wikibrain",
+            "getting-started",
+            "how-it-works",
+            "verified-benchmark",
+            "installation-and-trust",
+            "native-windows",
+            "daily-commands",
+            "data-and-privacy",
+            "project-documentation",
+        )
+        language_targets = set(readme_names)
+
+        for readme_name in readme_names:
+            readme = (ROOT / readme_name).read_text(encoding="utf-8")
+            with self.subTest(readme=readme_name):
+                for anchor_id in anchor_ids:
+                    self.assertEqual(readme.count(f'id="{anchor_id}"'), 1)
+                    self.assertIn(f"](#{anchor_id})", readme)
+                for target in language_targets - {readme_name}:
+                    self.assertIn(f'href="{target}"', readme)
 
     def test_deterministic_functional_benchmark(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -57,7 +104,14 @@ class SecondBrainBenchmarkTests(unittest.TestCase):
             )
 
         self.assertEqual(result["score_percent"], 100.0)
-        self.assertEqual(result["retrieval_mode"], "query-only")
+        self.assertEqual(result["retrieval_mode"], "mixed-contract")
+        self.assertEqual(
+            result["retrieval_modes"],
+            {
+                "query_checks": "query-only-no-recent-fallback",
+                "handoff_check": "session-start-recent-context",
+            },
+        )
         self.assertEqual(result["checks_passed"], result["checks_total"])
         self.assertGreaterEqual(result["corpus_documents"], 6)
         self.assertGreater(result["latency_ms"]["p50"], 0)

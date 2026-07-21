@@ -342,7 +342,11 @@ def run_benchmark(
     )
     return {
         "benchmark": BENCHMARK_VERSION,
-        "retrieval_mode": "query-only",
+        "retrieval_mode": "mixed-contract",
+        "retrieval_modes": {
+            "query_checks": "query-only-no-recent-fallback",
+            "handoff_check": "session-start-recent-context",
+        },
         "engine": wikimap.version() or "unavailable",
         "python": platform.python_version(),
         "platform": platform.platform(),

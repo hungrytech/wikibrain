@@ -9,7 +9,9 @@ The illustration is distributed under the repository's [MIT License](../../LICEN
 `benchmark-second-brain-v1.svg` is generated from the committed machine-readable
 benchmark result. Regenerate and verify it with:
 
+Run these commands from the repository root:
+
 ```bash
-python scripts/render_benchmark_chart.py
-python scripts/render_benchmark_chart.py --check
+uv run --locked python scripts/render_benchmark_chart.py
+uv run --locked python scripts/render_benchmark_chart.py --check
 ```

@@ -7,7 +7,10 @@
 <p align="center"><strong>Open source · Local-first · User-owned · Markdown-native</strong></p>
 
 <p align="center">
-  <strong>English</strong> · <a href="README.ko.md">한국어</a>
+  <strong>English</strong> ·
+  <a href="README.ko.md">한국어</a> ·
+  <a href="README.ja.md">日本語</a> ·
+  <a href="README.zh-CN.md">简体中文</a>
 </p>
 
 WikiBrain is an [MIT-licensed](LICENSE) shared second brain for Claude Code and
@@ -118,18 +121,19 @@ trust-boundary details.
 ## Verified benchmark
 
 <p align="center">
-  <img src="docs/assets/benchmark-second-brain-v1.svg" width="920" alt="WikiBrain benchmark: 8 of 8 functional checks passed; recall latency was 24.29 milliseconds p50 and 26.88 milliseconds p95 across 80 samples">
+  <img src="docs/assets/benchmark-second-brain-v1.svg" width="920" alt="WikiBrain benchmark: 8 of 8 functional checks passed; recall latency was 24.31 milliseconds p50 and 26.76 milliseconds p95 across 80 samples">
 </p>
 
-The committed fixed-corpus benchmark runs query-only retrieval with recent-item
-fallback disabled. A check passes only when search returns the expected evidence
-and excludes forbidden stale, secret, or cross-workspace content.
+The fixed-corpus benchmark disables recent-item fallback for query-based
+retrieval checks. A separate handoff check validates recent-context restoration
+through `SessionStart`. Query checks pass only when search returns the expected
+evidence and excludes forbidden stale, secret, or cross-workspace content.
 
 | Result | Value |
 | --- | ---: |
 | Functional checks | **8/8 passed** |
 | Recall samples | **80** (4 queries × 20 iterations) |
-| Latency | **24.29 ms p50 · 26.88 ms p95** |
+| Latency | **24.31 ms p50 · 26.76 ms p95** |
 | Environment | macOS arm64 · Python 3.13.11 · Wikimap 1.1.0 |
 
 <details>
@@ -155,7 +159,7 @@ uv run --locked python -m benchmarks.second_brain \
   --iterations 20 \
   --format json \
   --output benchmarks/results/second-brain-v1.json
-python scripts/render_benchmark_chart.py
+uv run --locked python scripts/render_benchmark_chart.py
 ```
 
 The machine-readable result is
@@ -174,13 +178,8 @@ machine and run and is not a stable performance guarantee.
 
 ### macOS or Linux
 
-```bash
-brew install hungrytech/tap/wikibrain
-brainctl init
-brainctl doctor
-```
-
-Prebuilt bottles cover Apple Silicon macOS, Intel macOS, and x86_64 Linux.
+Use the [Getting Started](#getting-started) commands above. Prebuilt bottles
+cover Apple Silicon macOS, Intel macOS, and x86_64 Linux.
 
 <a id="native-windows"></a>
 
@@ -281,6 +280,7 @@ brainctl resume
 brainctl forget --document memory-ID            # preview
 brainctl forget --document memory-ID --apply
 brainctl forget --document memory-ID --cascade  # preview source session
+brainctl forget --document memory-ID --cascade --apply
 brainctl retention                               # preview 90-day evidence pruning
 brainctl retention --apply
 ```
@@ -296,8 +296,8 @@ brainctl retention --apply
 - `remember` is project-scoped by default. Use `--global` only intentionally.
 - Retention removes expired session and handoff evidence, never explicit durable
   memories, and is preview-only without `--apply`.
-- A plain document deletion removes that page. Add `--cascade` to preview and
-  erase its source conversation as well.
+- A plain document deletion removes that page. Use `--cascade` to preview the
+  source conversation impact, then repeat it with `--apply` to erase both.
 - Override the state location with `WIKIBRAIN_HOME` or `brainctl --home PATH`.
 
 Homebrew or pipx uninstall does not delete the separate brain directory.

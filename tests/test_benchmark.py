@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import runpy
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -21,6 +23,31 @@ source_manifest_sha256: Callable[[], str] = BENCHMARK_GLOBALS[
 
 
 class SecondBrainBenchmarkTests(unittest.TestCase):
+    def test_committed_benchmark_chart_is_current(self) -> None:
+        completed = subprocess.run(
+            [sys.executable, "scripts/render_benchmark_chart.py", "--check"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_readme_benchmark_values_match_committed_result(self) -> None:
+        result_path = ROOT / "benchmarks" / "results" / "second-brain-v1.json"
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+        p50 = float(result["latency_ms"]["p50"])
+        p95 = float(result["latency_ms"]["p95"])
+        passed = int(result["checks_passed"])
+        total = int(result["checks_total"])
+
+        expected_values = (f"{p50:.2f}", f"{p95:.2f}", f"{passed}/{total}")
+        for readme_name in ("README.md", "README.ko.md"):
+            readme = (ROOT / readme_name).read_text(encoding="utf-8")
+            with self.subTest(readme=readme_name):
+                for value in expected_values:
+                    self.assertIn(value, readme)
+
     def test_deterministic_functional_benchmark(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             result = run_benchmark(

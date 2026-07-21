@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="540" viewBox="0 0 1000 540" role="img" aria-labelledby="title desc">
 <title>WikiBrain context recall quality benchmark</title>
-<desc>Final context quality across 12 labeled queries: Context Recall 87.50%, Context Precision 79.17%, Context F1 80.56%, Required facts 90.91%, Retrieval Recall@3 87.50%. 14 of 14 documents were accepted; final-context forbidden exposure was 0.00%.</desc>
+<desc>Final context quality across 12 labeled queries: Context Recall 87.50%, Context Precision 79.17%, Context F1 80.56%, Required facts 90.91%, Retrieval Recall@3 · diagnostic 87.50%. 14 of 14 documents were accepted; final-context forbidden exposure was 0.00%.</desc>
 <style>
   .bg { fill: #0d1117; }
   .panel { fill: #161b22; stroke: #30363d; stroke-width: 1; }
@@ -11,6 +11,7 @@
   .value { fill: #f0f6fc; font: 700 14px ui-monospace,SFMono-Regular,Consolas,monospace; }
   .track { fill: #30363d; }
   .bar { fill: #58a6ff; }
+  .diagnostic-bar { fill: #6e7681; }
   .card-value { fill: #3fb950; font: 700 21px ui-monospace,SFMono-Regular,Consolas,monospace; }
   .card-label { fill: #8b949e; font: 12px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
   .footer { fill: #6e7681; font: 11px ui-monospace,SFMono-Regular,Consolas,monospace; }
@@ -20,7 +21,7 @@
 <text x="48" y="68" class="title">Context recall quality</text>
 <text x="48" y="96" class="subtitle">Final injected context · required facts · precision · stale and workspace suppression</text>
 <text x="48" y="128" class="section">Final context quality</text>
-<text x="48" y="165" class="label">Context Recall</text><rect x="250" y="148" width="560" height="24" rx="6" class="track"/><rect x="250" y="148" width="490.00" height="24" rx="6" class="bar"/><text x="830" y="165" class="value">87.50%</text><text x="48" y="211" class="label">Context Precision</text><rect x="250" y="194" width="560" height="24" rx="6" class="track"/><rect x="250" y="194" width="443.33" height="24" rx="6" class="bar"/><text x="830" y="211" class="value">79.17%</text><text x="48" y="257" class="label">Context F1</text><rect x="250" y="240" width="560" height="24" rx="6" class="track"/><rect x="250" y="240" width="451.11" height="24" rx="6" class="bar"/><text x="830" y="257" class="value">80.56%</text><text x="48" y="303" class="label">Required facts</text><rect x="250" y="286" width="560" height="24" rx="6" class="track"/><rect x="250" y="286" width="509.09" height="24" rx="6" class="bar"/><text x="830" y="303" class="value">90.91%</text><text x="48" y="349" class="label">Retrieval Recall@3</text><rect x="250" y="332" width="560" height="24" rx="6" class="track"/><rect x="250" y="332" width="490.00" height="24" rx="6" class="bar"/><text x="830" y="349" class="value">87.50%</text>
+<text x="48" y="165" class="label">Context Recall</text><rect x="250" y="148" width="560" height="24" rx="6" class="track"/><rect x="250" y="148" width="490.00" height="24" rx="6" class="bar"/><text x="830" y="165" class="value">87.50%</text><text x="48" y="211" class="label">Context Precision</text><rect x="250" y="194" width="560" height="24" rx="6" class="track"/><rect x="250" y="194" width="443.33" height="24" rx="6" class="bar"/><text x="830" y="211" class="value">79.17%</text><text x="48" y="257" class="label">Context F1</text><rect x="250" y="240" width="560" height="24" rx="6" class="track"/><rect x="250" y="240" width="451.11" height="24" rx="6" class="bar"/><text x="830" y="257" class="value">80.56%</text><text x="48" y="303" class="label">Required facts</text><rect x="250" y="286" width="560" height="24" rx="6" class="track"/><rect x="250" y="286" width="509.09" height="24" rx="6" class="bar"/><text x="830" y="303" class="value">90.91%</text><text x="48" y="349" class="label">Retrieval Recall@3 · diagnostic</text><rect x="250" y="332" width="560" height="24" rx="6" class="track"/><rect x="250" y="332" width="490.00" height="24" rx="6" class="diagnostic-bar"/><text x="830" y="349" class="value">87.50%</text>
 <text x="48" y="394" class="section">Ingestion integrity &amp; safety</text>
 <rect x="48" y="410" width="205" height="70" rx="9" class="panel"/>
 <text x="66" y="441" class="card-value">14 / 14</text>
@@ -34,5 +35,5 @@
 <rect x="708" y="410" width="220" height="70" rx="9" class="panel"/>
 <text x="726" y="441" class="card-value">clean</text>
 <text x="726" y="462" class="card-label">Index state · deleted 1</text>
-<text x="48" y="502" class="footer">retrieval-quality-corpus-v1 · 12 queries · wikimap 1.1.0 · result c9e10a137fb1</text>
+<text x="48" y="502" class="footer">retrieval-quality-corpus-v1 · 12 queries · wikimap 1.1.0 · result c0a987c20f58</text>
 </svg>

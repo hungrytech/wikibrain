@@ -14,6 +14,10 @@
 - `brainctl remember TEXT`: create a project-scoped durable Markdown memory.
 - `brainctl remember --global TEXT`: intentionally create a cross-project
   memory.
+- `brainctl remember --relates-to ID [--relates-to ID ...] TEXT`: attach
+  same-workspace supporting memories. Recall follows these links one hop.
+- `brainctl remember --supersedes ID [--supersedes ID ...] TEXT`: replace
+  outdated same-workspace memories in future recall.
 - `brainctl status`: inspect capture state, storage counts, Wikimap, and hooks.
 - `brainctl retention [--days N]`: preview expired session/handoff evidence.
 

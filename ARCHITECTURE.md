@@ -13,9 +13,10 @@ Codex hooks ───────┘       │
 ## Boundaries
 
 - SQLite owns hook receipts, sessions, turns, selected tool pointers,
-  document registrations, and deletion tombstones.
-- Markdown owns readable durable memory. Conversation turns are immutable
-  handoff pages, so later edits cannot silently rewrite the evidence.
+  document registrations, typed document relations, and deletion tombstones.
+- Markdown owns readable durable memory, including `relates_to` and `supersedes`
+  frontmatter. Conversation turns are immutable handoff pages, so later edits
+  cannot silently rewrite the evidence.
 - Wikimap owns indexing and search. WikiBrain only invokes `update`, `search
   --json`, and `doctor`; it never opens Wikimap's internal database or semantic
   log.
@@ -69,8 +70,14 @@ Claude deletion cannot erase an unrelated Codex session with the same ID.
 
 All redacted turns are searchable evidence, but they are not automatically
 treated as permanent truth. Only explicit requests such as “기억해” or
-“remember this” produce a durable memory page in V1. Promotion into system
-instructions, `AGENTS.md`, `CLAUDE.md`, or skills is never automatic.
+“remember this” produce a durable memory page in V1. A durable memory may link
+to same-workspace evidence with `relates-to` or replace stale guidance with
+`supersedes`; recall follows supporting links one hop and omits superseded
+memories. If a newer memory is forgotten, a compact SQLite supersession
+tombstone keeps its stale predecessor suppressed. Forgetting a relation target
+also removes the dangling ID from surviving Markdown frontmatter. Promotion
+into system instructions, `AGENTS.md`, `CLAUDE.md`, or skills is never
+automatic.
 
 ## Privacy
 

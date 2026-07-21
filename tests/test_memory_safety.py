@@ -5,7 +5,7 @@ import os
 import tempfile
 import unittest
 from argparse import Namespace
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import redirect_stdout
 from datetime import UTC, datetime, timedelta
 from io import StringIO
 from pathlib import Path
@@ -1011,6 +1011,9 @@ class MemorySafetyTests(unittest.TestCase):
                     "UPDATE documents SET created_at = ? WHERE session_id = 'old'",
                     (old_timestamp,),
                 )
+            old_document_id = str(
+                store.documents_for_session("old")[0]["document_id"]
+            )
             memory_id, memory_path = Curator(
                 config,
                 store,
@@ -1018,6 +1021,8 @@ class MemorySafetyTests(unittest.TestCase):
             ).remember(
                 "Permanent preference.",
                 title="Permanent",
+                workspace=str(workspace),
+                relates_to=[old_document_id],
                 update_index=False,
             )
             with store.transaction() as connection:
@@ -1060,6 +1065,9 @@ class MemorySafetyTests(unittest.TestCase):
             self.assertEqual(len(store.documents_for_session("new")), 1)
             self.assertIsNotNone(store.document(memory_id))
             self.assertTrue(memory_path.exists())
+            self.assertNotIn(
+                old_document_id, memory_path.read_text(encoding="utf-8")
+            )
 
 
 if __name__ == "__main__":

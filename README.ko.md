@@ -27,6 +27,68 @@ WikiBrain은 Claude Code와 Codex가 함께 쓰는
 - 수집 범위를 제한하거나 잠시 멈추고, 내용을 확인하거나 삭제할 수 있습니다.
 - 나중에 모델이나 코딩 에이전트를 바꾸더라도 Markdown 데이터는 그대로 남습니다.
 
+## 검증된 제2두뇌 벤치마크
+
+WikiBrain을 실제 업무 맥락용 제2두뇌로 신뢰하기 전에 확인해야 할 동작을
+고정 corpus 기반의 로컬 회귀 벤치마크로 만들었습니다. Query 검사는 최근 문서
+fallback을 끄고 실행하므로, 우연히 최신 문서가 섞여서 PASS할 수 없습니다.
+검색 결과와 명시적으로 연결된 근거 문서만 평가합니다. 고정된 문서 8개에는
+두 프로젝트, 변경된 결정, 근거 문서, 담당자 관계, 전역 사용자 선호,
+합성 비밀정보, Claude에서 Codex로 이어지는 handoff가 들어 있습니다.
+
+소스 checkout의 저장소 루트에서 실행합니다.
+
+```bash
+uv run python -m benchmarks.second_brain \
+  --iterations 20 \
+  --format json \
+  --output benchmarks/results/second-brain-v1.json
+```
+
+macOS arm64, Python 3.13.11, Wikimap 1.1.0에서 측정한 결과입니다.
+
+| 검사 | 확인하는 내용 | 결과 |
+|---|---|---:|
+| 최신 결정 회수 | 새 `uv` 결정이 폐기된 `pip` 지침을 대체하는가 | PASS |
+| 결정과 근거 연결 | `relates-to`, `supersedes` 관계가 회수 결과에 남는가 | PASS |
+| 사람·프로젝트 맥락 | 담당자와 예비 검토자 정보를 찾을 수 있는가 | PASS |
+| 출처 추적 | 문서 ID, Markdown 경로, 적재 시간이 근거와 함께 나오는가 | PASS |
+| workspace 격리 | 다른 프로젝트의 표식이 범위를 넘어오지 않는가 | PASS |
+| 비밀정보 제거 | 합성 API 비밀값이 영구 저장·회수 전에 제거되는가 | PASS |
+| 전역 사용자 선호 | 프로젝트 안에서 사용자 선호를 다시 찾을 수 있는가 | PASS |
+| Claude → Codex handoff | Claude 세션의 사실이 Codex 시작 시 전달되는가 | PASS |
+
+**결과는 8/8, 100%입니다.** 고정 corpus에서 80회의 회수를 측정했을 때
+지연시간은 **p50 24.09ms**, **p95 26.49ms**였습니다. 커밋된 기능 결과는
+Python 3.13.11과 Wikimap 1.1.0에서 측정했습니다. 지원 범위 안의 다른 Wikimap
+1.x 버전은 검색 순위가 달라질 수 있습니다. 지연시간도 실행 환경과 시점에
+따라 달라지며 고정된 성능 보장은 아닙니다. 기계가 읽을 수 있는 원본 결과는
+[`benchmarks/results/second-brain-v1.json`](benchmarks/results/second-brain-v1.json)에
+있습니다.
+
+### 벤치마크로 발견하고 개선한 부분
+
+초기 구현은 출처가 있는 Markdown을 잘 보관했지만, 각 기억은 서로 연결되지
+않은 텍스트 문서에 가까웠습니다. 이전 결정과 새 결정이 함께 회수될 수 있었고,
+관계·시간적 최신성·범위 격리·에이전트 간 연속성을 재현해서 측정할 품질 관문도
+없었습니다. 이번 개선에는 다음이 포함됩니다.
+
+- Markdown frontmatter와 SQLite에 `relates-to`, `supersedes` 관계 저장
+- 관계를 적재하기 전에 같은 workspace인지 검증
+- 새 기억이 대체한 오래된 기억을 회수 결과에서 제외
+- 회수 근거 envelope에 관계 유형과 대상 문서 ID 포함
+- 검색기가 frontmatter만 반환할 때 실제 원문 본문을 근거로 사용
+
+### 이 수치가 의미하지 않는 것
+
+100%는 고정 회귀 벤치마크를 모두 통과했다는 뜻이지, 범용 지능이나 완성된
+조직 지식 그래프를 뜻하지 않습니다. corpus는 작고 합성 데이터입니다. 장기간
+쌓인 잡음 많은 vault, 의미적 바꿔 말하기, OCR·문서 인입, 동시 쓰기,
+답변 생성의 근거 충실성, 다단계 그래프 추론은 아직 측정하지 않습니다. 현재
+관계는 문서 사이의 typed link이며 사람·프로젝트·작업·결정·유효 기간을
+독립 entity로 다루는 관계 그래프는 아닙니다. 실제 조직 제2두뇌가 되려면 이
+부분이 다음 개선 대상입니다.
+
 ## 시작하기
 
 설치부터 실제 제2두뇌 동작 확인까지 가장 짧고 안전한 순서입니다. 운영체제별
@@ -329,6 +391,7 @@ brainctl status
 brainctl recall "인증 구조에 대해 어떤 결정을 내렸지?"
 brainctl remember --title "선호 패키지 관리자" "Python 도구에는 uv를 사용한다."
 brainctl remember --global "한국어로 간결하게 답하는 것을 선호한다."
+brainctl remember --title "uv 사용" --relates-to 근거-ID --supersedes 이전-ID "uv를 사용한다."
 brainctl pause
 brainctl resume
 brainctl forget --document memory-ID        # 미리보기

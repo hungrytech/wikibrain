@@ -27,6 +27,69 @@ stores durable context as readable Markdown, and uses
 - Capture is allowlisted, pauseable, inspectable, and deletable.
 - Markdown remains yours even if you switch models or coding agents.
 
+## Verified second-brain benchmark
+
+WikiBrain ships a fixed-corpus local regression benchmark for the behaviors that
+matter before it can be trusted as a work-context second brain. Query checks run
+without recent-document fallback, so a PASS must come from query retrieval (plus
+an explicitly linked evidence document), not accidental recency. The eight-document
+corpus includes two projects, a changed decision, supporting evidence,
+people/ownership context, a global preference, a synthetic secret, and a
+Claude-to-Codex handoff.
+
+Run from a source checkout:
+
+```bash
+uv run python -m benchmarks.second_brain \
+  --iterations 20 \
+  --format json \
+  --output benchmarks/results/second-brain-v1.json
+```
+
+Measured on macOS arm64 with Python 3.13.11 and Wikimap 1.1.0:
+
+| Check | What it verifies | Result |
+|---|---|---:|
+| Current decision recall | a newer `uv` decision replaces stale `pip` guidance | PASS |
+| Decision/evidence link | typed `relates-to` and `supersedes` edges survive recall | PASS |
+| Person/project context | ownership and backup-reviewer facts remain recoverable | PASS |
+| Source provenance | document ID, Markdown path, and capture time accompany evidence | PASS |
+| Workspace isolation | a marker from another project does not cross the scope boundary | PASS |
+| Secret redaction | a synthetic API secret is removed before durable storage/recall | PASS |
+| Global preference | a user preference is available inside a project scope | PASS |
+| Claude → Codex handoff | a Claude session fact appears at Codex session start | PASS |
+
+**Result: 8/8 checks (100%).** For 80 measured recall calls over the fixed
+corpus, latency was **24.09 ms p50** and **26.49 ms p95**. The committed
+functional result records Python 3.13.11 and Wikimap 1.1.0; supported Wikimap 1.x
+versions may rank differently. Latency is a machine- and run-dependent
+measurement, not a stable performance guarantee. The machine-readable result is
+stored at
+[`benchmarks/results/second-brain-v1.json`](benchmarks/results/second-brain-v1.json).
+
+### What this benchmark exposed and changed
+
+The initial implementation stored provenance-rich Markdown, but each memory was
+still an isolated text document. Old and new decisions could both be recalled,
+and there was no executable quality gate for relationships, temporal freshness,
+scope isolation, or cross-agent continuity. This work added:
+
+- typed `relates-to` and `supersedes` links in Markdown frontmatter and SQLite;
+- same-workspace validation before a relationship can be persisted;
+- stale-memory suppression when a newer memory supersedes it;
+- relationship IDs in the recalled evidence envelope; and
+- source-body excerpts when a search engine returns only a frontmatter match.
+
+### Limits of the result
+
+The 100% score is a regression result, not a claim of general intelligence. The
+corpus is small and synthetic. It does not yet measure noisy long-running vaults,
+semantic paraphrase quality, OCR/document ingestion, concurrent writers,
+answer-generation faithfulness, or multi-hop graph reasoning. Relationships are
+currently typed links between documents—not yet a first-class graph of people,
+projects, tasks, decisions, and validity intervals. Those are the next gaps to
+close before treating WikiBrain as a complete organizational brain.
+
 ## Getting Started
 
 This is the shortest safe path from installation to a working second brain.
@@ -331,6 +394,7 @@ brainctl status
 brainctl recall "what did we decide about the auth architecture?"
 brainctl remember --title "Preferred package manager" "Use uv for Python tools."
 brainctl remember --global "I prefer concise Korean answers."
+brainctl remember --title "Use uv" --relates-to evidence-ID --supersedes old-ID "Use uv."
 brainctl pause
 brainctl resume
 brainctl forget --document memory-ID        # preview

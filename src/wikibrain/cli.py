@@ -319,8 +319,21 @@ def command_remember(args: argparse.Namespace, home: Path) -> int:
         title=args.title,
         workspace=workspace,
         source="brainctl",
+        relates_to=args.relates_to,
+        supersedes=args.supersedes,
     )
-    _emit({"status": "ok", "id": document_id, "path": str(path)}, args.json)
+    _emit(
+        {
+            "status": "ok",
+            "id": document_id,
+            "path": str(path),
+            "relations": {
+                "relates_to": args.relates_to,
+                "supersedes": args.supersedes,
+            },
+        },
+        args.json,
+    )
     return 0
 
 
@@ -528,6 +541,25 @@ def _erase_owned_paths(config: BrainConfig, values: list[str]) -> None:
             raise RuntimeError(f"could not erase owned memory file: {path}") from error
 
 
+def _remove_forgotten_relation_targets(
+    curator: Curator,
+    receipts: list[dict[str, Any]],
+    *,
+    default_target_document_id: str | None = None,
+) -> None:
+    for receipt in receipts:
+        for relation in receipt.get("removed_incoming_relations", []):
+            if not isinstance(relation, dict) or not relation.get("path"):
+                continue
+            target_document_id = (
+                relation.get("target_document_id") or default_target_document_id
+            )
+            if target_document_id:
+                curator.remove_relation_target(
+                    Path(str(relation["path"])), str(target_document_id)
+                )
+
+
 def command_forget(args: argparse.Namespace, home: Path) -> int:
     config = _load(home)
     store = BrainStore(config.database_path)
@@ -613,12 +645,18 @@ def command_forget(args: argparse.Namespace, home: Path) -> int:
     # A hook may finish between preview and the SQLite tombstone transaction.
     # Replaying the receipt also makes a partially failed erase recoverable.
     _erase_owned_paths(config, [str(value) for value in receipt.get("paths", [])])
-    store.checkpoint()
-    index_updated = Curator(
+    curator = Curator(
         config,
         store,
         WikimapAdapter(config.vault_path, config.wikimap_command),
-    ).update_index()
+    )
+    _remove_forgotten_relation_targets(
+        curator,
+        [receipt],
+        default_target_document_id=getattr(args, "document", None),
+    )
+    store.checkpoint()
+    index_updated = curator.update_index()
     receipt["index_updated"] = index_updated
     receipt_path = (
         config.home_path
@@ -683,12 +721,14 @@ def command_retention(args: argparse.Namespace, home: Path) -> int:
             for path in receipt.get("paths", [])
         ],
     )
-    store.checkpoint()
-    index_updated = Curator(
+    curator = Curator(
         config,
         store,
         WikimapAdapter(config.vault_path, config.wikimap_command),
-    ).update_index()
+    )
+    _remove_forgotten_relation_targets(curator, receipts)
+    store.checkpoint()
+    index_updated = curator.update_index()
     preview.update(
         {
             "dry_run": False,
@@ -781,6 +821,20 @@ def build_parser() -> argparse.ArgumentParser:
     remember = commands.add_parser("remember", help="Save an explicit durable memory")
     remember.add_argument("text", nargs="?")
     remember.add_argument("--title")
+    remember.add_argument(
+        "--relates-to",
+        action="append",
+        default=[],
+        metavar="DOCUMENT_ID",
+        help="Link supporting or related memory (repeatable)",
+    )
+    remember.add_argument(
+        "--supersedes",
+        action="append",
+        default=[],
+        metavar="DOCUMENT_ID",
+        help="Replace an outdated memory in recall (repeatable)",
+    )
     memory_scope = remember.add_mutually_exclusive_group()
     memory_scope.add_argument("--workspace")
     memory_scope.add_argument(

@@ -4,6 +4,7 @@ import html
 import re
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 from .config import BrainConfig
 from .models import SearchHit
@@ -11,13 +12,49 @@ from .storage import BrainStore
 from .wikimap_adapter import WikimapAdapter, WikimapError, fallback_search
 
 
-def _excerpt(path: Path, limit: int = 900) -> str:
+def _document_body(path: Path) -> str:
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError):
         return ""
     body = re.sub(r"\A---\s*\n.*?\n---\s*\n", "", text, count=1, flags=re.DOTALL)
-    body = re.sub(r"\s+", " ", body).strip()
+    return re.sub(r"\s+", " ", body).strip()
+
+
+def _excerpt(path: Path, limit: int = 900) -> str:
+    return _document_body(path)[:limit]
+
+
+def _search_evidence(
+    path: Path,
+    *,
+    snippet: str,
+    query: str,
+    limit: int = 1_000,
+) -> str:
+    """Return source-verified evidence near the actual match when possible."""
+    body = _document_body(path)
+    if not body:
+        return ""
+    needles = [
+        re.sub(r"\s+", " ", value).strip()
+        for value in (snippet, query)
+        if value.strip()
+    ]
+    folded = body.casefold()
+    for needle in needles:
+        position = folded.find(needle.casefold())
+        if position < 0:
+            continue
+        radius = max(120, limit // 2)
+        start = max(0, position - radius)
+        end = min(len(body), position + len(needle) + radius)
+        evidence = body[start:end]
+        if start:
+            evidence = "… " + evidence
+        if end < len(body):
+            evidence += " …"
+        return evidence[:limit]
     return body[:limit]
 
 
@@ -38,10 +75,18 @@ def _render_record(
     line: int | None,
     captured_at: str,
     evidence: str,
+    relations: list[tuple[str, str]] | None = None,
     truncated: bool = False,
 ) -> str:
     line_attribute = f' line="{line}"' if line is not None else ""
     truncated_attribute = ' truncated="true"' if truncated else ""
+    relation_lines = ""
+    if relations:
+        relation_lines = "  <relations>\n" + "".join(
+            f'    <relation type="{_escaped(relation_type)}" '
+            f'document_id="{_escaped(target_document_id)}" />\n'
+            for relation_type, target_document_id in relations
+        ) + "  </relations>\n"
     return (
         f'<record index="{index}" id="{_escaped(document_id)}" '
         f'kind="{_escaped(kind)}"{truncated_attribute}>\n'
@@ -51,6 +96,7 @@ def _render_record(
         f'session_id="{_escaped(session_id)}" '
         f'turn_id="{_escaped(turn_id)}" />\n'
         f"  <captured_at>{_escaped(captured_at)}</captured_at>\n"
+        f"{relation_lines}"
         f"  <evidence>{_escaped(evidence)}</evidence>\n"
         "</record>"
     )
@@ -84,6 +130,8 @@ class RecallService:
             return None
         row = self.store.document_for_path(resolved)
         if row is None:
+            return None
+        if self.store.document_is_superseded(str(row["document_id"])):
             return None
         workspace = str(row["workspace"] or "")
         is_global_memory = row["kind"] == "memory" and not workspace
@@ -158,12 +206,18 @@ class RecallService:
                 break
         return selected, engine
 
-    def context(self, cwd: str, query: str | None = None) -> str:
+    def context(
+        self,
+        cwd: str,
+        query: str | None = None,
+        *,
+        include_recent: bool = True,
+    ) -> str:
         scope = self._scope(cwd)
         if scope is None:
             return ""
 
-        records: list[dict[str, object]] = []
+        records: list[dict[str, Any]] = []
         seen_paths: set[str] = set()
         if query:
             hits, engine_note = self.search(query, scope)
@@ -171,22 +225,96 @@ class RecallService:
                 records.append(
                     {
                         "document_id": str(row["document_id"]),
-                        "kind": hit.kind,
+                        "kind": str(row["kind"]),
+                        "title": hit.title,
                         "provider": str(row["provider"] or ""),
                         "session_id": str(row["session_id"] or ""),
                         "turn_id": str(row["turn_key"] or ""),
-                        "title": hit.title,
                         "path": hit.path,
                         "line": hit.line,
                         "captured_at": str(row["created_at"]),
-                        "evidence": hit.snippet.strip()[:1_000],
+                        "evidence": _search_evidence(
+                            Path(str(row["path"])),
+                            snippet=hit.snippet,
+                            query=query,
+                        ),
+                        "relations": [
+                            (
+                                str(relation["relation_type"]),
+                                str(relation["target_document_id"]),
+                            )
+                            for relation in self.store.document_relations(
+                                str(row["document_id"])
+                            )
+                        ],
                     }
                 )
                 seen_paths.add(hit.path)
         else:
             engine_note = "recent"
 
-        for row in self.store.recent_documents(scope, limit=4):
+        # Follow supporting links one hop. A query can find a decision even when
+        # its evidence uses entirely different vocabulary.
+        related_records: list[dict[str, Any]] = []
+        for source_record in records:
+            if len(records) + len(related_records) >= self.config.recall_result_limit:
+                break
+            for relation_type, target_id in source_record.get("relations", []):
+                if len(records) + len(related_records) >= self.config.recall_result_limit:
+                    break
+                if relation_type != "relates-to":
+                    continue
+                related_row = self.store.document(target_id)
+                if related_row is None or self.store.document_is_superseded(target_id):
+                    continue
+                workspace = str(related_row["workspace"] or "")
+                is_global_memory = (
+                    related_row["kind"] == "memory" and not workspace
+                )
+                if workspace != scope and not is_global_memory:
+                    continue
+                path = Path(str(related_row["path"]))
+                try:
+                    relative = str(path.resolve().relative_to(self.config.vault_path))
+                except (OSError, RuntimeError, ValueError):
+                    continue
+                if relative in seen_paths or not path.is_file():
+                    continue
+                snippet = _excerpt(path)
+                if not snippet:
+                    continue
+                related_records.append(
+                    {
+                        "document_id": target_id,
+                        "kind": str(related_row["kind"]),
+                        "title": path.stem,
+                        "provider": str(related_row["provider"] or ""),
+                        "session_id": str(related_row["session_id"] or ""),
+                        "turn_id": str(related_row["turn_key"] or ""),
+                        "path": relative,
+                        "line": None,
+                        "captured_at": str(related_row["created_at"]),
+                        "evidence": snippet,
+                        "relations": [
+                            (
+                                str(relation["relation_type"]),
+                                str(relation["target_document_id"]),
+                            )
+                            for relation in self.store.document_relations(target_id)
+                        ],
+                    }
+                )
+                seen_paths.add(relative)
+                if len(records) + len(related_records) >= self.config.recall_result_limit:
+                    break
+            if len(records) + len(related_records) >= self.config.recall_result_limit:
+                break
+        records.extend(related_records)
+
+        recent_rows = self.store.recent_documents(scope, limit=4) if include_recent else []
+        for row in recent_rows:
+            if len(records) >= self.config.recall_result_limit:
+                break
             path = Path(str(row["path"]))
             try:
                 relative = str(path.resolve().relative_to(self.config.vault_path.resolve()))
@@ -208,6 +336,15 @@ class RecallService:
                         "line": None,
                         "captured_at": str(row["created_at"]),
                         "evidence": snippet,
+                        "relations": [
+                            (
+                                str(relation["relation_type"]),
+                                str(relation["target_document_id"]),
+                            )
+                            for relation in self.store.document_relations(
+                                str(row["document_id"])
+                            )
+                        ],
                     }
                 )
 

@@ -1,0 +1,126 @@
+{
+  "benchmark": "second-brain-v1",
+  "retrieval_mode": "query-only",
+  "engine": "wikimap 1.1.0",
+  "python": "3.13.11",
+  "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+  "corpus_documents": 8,
+  "checks_passed": 8,
+  "checks_total": 8,
+  "score_percent": 100.0,
+  "latency_ms": {
+    "samples": 80,
+    "p50": 24.09,
+    "p95": 26.49
+  },
+  "cases": [
+    {
+      "name": "current-decision-recall",
+      "category": "temporal",
+      "passed": true,
+      "expected": [
+        "use uv",
+        "memory-2cc65b2d35edec01139411d8"
+      ],
+      "forbidden": [
+        "use pip"
+      ],
+      "missing": [],
+      "unexpected": []
+    },
+    {
+      "name": "decision-evidence-link",
+      "category": "relations",
+      "passed": true,
+      "expected": [
+        "type=\"relates-to\"",
+        "document_id=\"memory-887bbcc10481dbc55a3f8e0b\"",
+        "uv sync --frozen",
+        "type=\"supersedes\"",
+        "document_id=\"memory-33fd8d2c9379273356d0ec36\""
+      ],
+      "forbidden": [],
+      "missing": [],
+      "unexpected": []
+    },
+    {
+      "name": "person-project-context",
+      "category": "work-context",
+      "passed": true,
+      "expected": [
+        "Mina",
+        "Project Atlas",
+        "Joon"
+      ],
+      "forbidden": [],
+      "missing": [],
+      "unexpected": []
+    },
+    {
+      "name": "source-provenance",
+      "category": "provenance",
+      "passed": true,
+      "expected": [
+        "<source path=",
+        "<captured_at>",
+        "memory-2cc65b2d35edec01139411d8"
+      ],
+      "forbidden": [],
+      "missing": [],
+      "unexpected": []
+    },
+    {
+      "name": "workspace-isolation",
+      "category": "privacy",
+      "passed": true,
+      "expected": [
+        "Atlas-204"
+      ],
+      "forbidden": [
+        "Cedar-991",
+        "Borealis private client"
+      ],
+      "missing": [],
+      "unexpected": []
+    },
+    {
+      "name": "secret-redaction",
+      "category": "privacy",
+      "passed": true,
+      "expected": [
+        "Saffron-418",
+        "[REDACTED]",
+        "<durable_storage_clean>true</durable_storage_clean>"
+      ],
+      "forbidden": [
+        "benchmark-secret-value-12345"
+      ],
+      "missing": [],
+      "unexpected": []
+    },
+    {
+      "name": "global-preference-recall",
+      "category": "scope",
+      "passed": true,
+      "expected": [
+        "concise Korean",
+        "concrete next actions"
+      ],
+      "forbidden": [],
+      "missing": [],
+      "unexpected": []
+    },
+    {
+      "name": "claude-to-codex-handoff",
+      "category": "handoff",
+      "passed": true,
+      "expected": [
+        "Nebula-42",
+        "provider=\"claude\""
+      ],
+      "forbidden": [],
+      "missing": [],
+      "unexpected": []
+    }
+  ]
+}

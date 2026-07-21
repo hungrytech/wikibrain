@@ -8,13 +8,13 @@ import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, Literal
 
 from .config import PRIVATE_FILE_MODE, ensure_private_directory
 from .models import NormalizedEvent
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 5
 
 
 class ClosingConnection(sqlite3.Connection):
@@ -25,7 +25,7 @@ class ClosingConnection(sqlite3.Connection):
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
         traceback: Any,
-    ) -> bool:
+    ) -> Literal[False]:
         try:
             return super().__exit__(exc_type, exc_value, traceback)
         finally:
@@ -219,6 +219,32 @@ class BrainStore:
                     metadata_json TEXT NOT NULL DEFAULT '{}'
                 );
 
+                CREATE TABLE IF NOT EXISTS document_relations (
+                    source_document_id TEXT NOT NULL,
+                    relation_type TEXT NOT NULL
+                        CHECK (relation_type IN ('relates-to', 'supersedes')),
+                    target_document_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (
+                        source_document_id,
+                        relation_type,
+                        target_document_id
+                    ),
+                    FOREIGN KEY (source_document_id)
+                        REFERENCES documents(document_id) ON DELETE CASCADE,
+                    FOREIGN KEY (target_document_id)
+                        REFERENCES documents(document_id) ON DELETE CASCADE,
+                    CHECK (source_document_id != target_document_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS supersession_tombstones (
+                    target_document_id TEXT PRIMARY KEY,
+                    superseder_document_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (target_document_id)
+                        REFERENCES documents(document_id) ON DELETE CASCADE
+                );
+
                 CREATE TABLE IF NOT EXISTS tombstones (
                     tombstone_id TEXT PRIMARY KEY,
                     selector TEXT NOT NULL UNIQUE,
@@ -231,6 +257,8 @@ class BrainStore:
                     ON turns(cwd, completed_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_documents_workspace
                     ON documents(workspace, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_document_relations_target
+                    ON document_relations(target_document_id, relation_type);
                 CREATE INDEX IF NOT EXISTS idx_events_session
                     ON events(provider, session_id, created_at);
                 """
@@ -848,6 +876,7 @@ class BrainStore:
         turn_key: str | None = None,
         workspace: str | None = None,
         metadata: dict[str, Any] | None = None,
+        relations: dict[str, list[str]] | None = None,
     ) -> bool:
         with self.transaction() as connection:
             session_forgotten = bool(
@@ -890,6 +919,24 @@ class BrainStore:
                         (provider, session_id, turn_key),
                     )
                 return False
+            existing_document = connection.execute(
+                "SELECT workspace FROM documents WHERE document_id = ?",
+                (document_id,),
+            ).fetchone()
+            if (
+                existing_document is not None
+                and str(existing_document["workspace"] or "") != str(workspace or "")
+            ):
+                participates_in_relation = connection.execute(
+                    """
+                    SELECT 1 FROM document_relations
+                    WHERE source_document_id = ? OR target_document_id = ?
+                    LIMIT 1
+                    """,
+                    (document_id, document_id),
+                ).fetchone()
+                if participates_in_relation is not None:
+                    raise ValueError("a related document workspace cannot change")
             connection.execute(
                 """
                 INSERT INTO documents(
@@ -917,6 +964,33 @@ class BrainStore:
                     json.dumps(metadata or {}, ensure_ascii=False),
                 ),
             )
+            if relations is not None:
+                self._validate_relation_targets(
+                    connection,
+                    document_id,
+                    workspace,
+                    relations,
+                )
+                connection.execute(
+                    "DELETE FROM document_relations WHERE source_document_id = ?",
+                    (document_id,),
+                )
+                for relation_type, targets in relations.items():
+                    for target_document_id in dict.fromkeys(targets):
+                        connection.execute(
+                            """
+                            INSERT INTO document_relations(
+                                source_document_id, relation_type,
+                                target_document_id, created_at
+                            ) VALUES (?, ?, ?, ?)
+                            """,
+                            (
+                                document_id,
+                                relation_type,
+                                target_document_id,
+                                utc_now(),
+                            ),
+                        )
             self._mark_dirty(connection)
             if kind == "session" and provider and session_id and turn_key:
                 connection.execute(
@@ -927,6 +1001,103 @@ class BrainStore:
                     (document_id, provider, session_id, turn_key),
                 )
             return True
+
+    @staticmethod
+    def _validate_relation_targets(
+        connection: sqlite3.Connection,
+        source_document_id: str,
+        workspace: str | None,
+        relations: dict[str, list[str]],
+    ) -> None:
+        allowed_types = {"relates-to", "supersedes"}
+        for relation_type, targets in relations.items():
+            if relation_type not in allowed_types:
+                raise ValueError(f"unsupported relation type: {relation_type}")
+            for target_document_id in dict.fromkeys(targets):
+                if target_document_id == source_document_id:
+                    raise ValueError("a memory cannot relate to itself")
+                row = connection.execute(
+                    "SELECT workspace FROM documents WHERE document_id = ?",
+                    (target_document_id,),
+                ).fetchone()
+                if row is None:
+                    raise ValueError(
+                        f"relation target does not exist: {target_document_id}"
+                    )
+                target_workspace = str(row["workspace"] or "")
+                source_workspace = str(workspace or "")
+                if target_workspace != source_workspace:
+                    raise ValueError(
+                        "relation target is outside the source workspace: "
+                        f"{target_document_id}"
+                    )
+                if relation_type == "supersedes":
+                    creates_cycle = connection.execute(
+                        """
+                        WITH RECURSIVE descendants(document_id) AS (
+                            SELECT ?
+                            UNION
+                            SELECT relation.target_document_id
+                            FROM document_relations AS relation
+                            JOIN descendants
+                              ON relation.source_document_id = descendants.document_id
+                            WHERE relation.relation_type = 'supersedes'
+                        )
+                        SELECT 1 FROM descendants
+                        WHERE document_id = ?
+                        LIMIT 1
+                        """,
+                        (target_document_id, source_document_id),
+                    ).fetchone()
+                    if creates_cycle is not None:
+                        raise ValueError("supersedes relation would create a cycle")
+
+    def validate_relation_targets(
+        self,
+        source_document_id: str,
+        workspace: str | None,
+        relations: dict[str, list[str]],
+    ) -> None:
+        with self.connect() as connection:
+            self._validate_relation_targets(
+                connection,
+                source_document_id,
+                workspace,
+                relations,
+            )
+
+    def document_relations(self, document_id: str) -> list[sqlite3.Row]:
+        with self.connect() as connection:
+            return list(
+                connection.execute(
+                    """
+                    SELECT relation_type, target_document_id, created_at
+                    FROM document_relations
+                    WHERE source_document_id = ?
+                    ORDER BY relation_type, target_document_id
+                    """,
+                    (document_id,),
+                ).fetchall()
+            )
+
+    def document_is_superseded(self, document_id: str) -> bool:
+        with self.connect() as connection:
+            return (
+                connection.execute(
+                    """
+                    SELECT 1 FROM (
+                        SELECT target_document_id FROM document_relations
+                        WHERE relation_type = 'supersedes'
+                        UNION ALL
+                        SELECT target_document_id FROM supersession_tombstones
+                    )
+                    WHERE target_document_id = ?
+                    LIMIT 1
+                    """,
+                    (document_id,),
+                ).fetchone()
+                is not None
+            )
 
     def recent_documents(self, cwd: str, limit: int = 4) -> list[sqlite3.Row]:
         with self.connect() as connection:
@@ -939,6 +1110,15 @@ class BrainStore:
                         OR (kind = 'memory' AND COALESCE(workspace, '') = '')
                     )
                       AND kind IN ('session', 'handoff', 'memory')
+                      AND NOT EXISTS (
+                          SELECT 1 FROM document_relations
+                          WHERE relation_type = 'supersedes'
+                            AND target_document_id = documents.document_id
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM supersession_tombstones
+                          WHERE target_document_id = documents.document_id
+                      )
                     ORDER BY created_at DESC LIMIT ?
                     """,
                     (cwd, limit),
@@ -1029,6 +1209,22 @@ class BrainStore:
             row = connection.execute(
                 "SELECT * FROM documents WHERE document_id = ?", (document_id,)
             ).fetchone()
+            incoming_rows = (
+                connection.execute(
+                    """
+                    SELECT relation.source_document_id,
+                           relation.relation_type,
+                           source.path
+                    FROM document_relations AS relation
+                    JOIN documents AS source
+                      ON source.document_id = relation.source_document_id
+                    WHERE relation.target_document_id = ?
+                    """,
+                    (document_id,),
+                ).fetchall()
+                if row
+                else []
+            )
             receipt = {
                 "selector": selector,
                 "found": bool(row),
@@ -1042,8 +1238,40 @@ class BrainStore:
                 "workspace": (
                     str(row["workspace"]) if row and row["workspace"] else None
                 ),
+                "removed_incoming_relations": [
+                    {
+                        "target_document_id": document_id,
+                        "source_document_id": str(value["source_document_id"]),
+                        "relation_type": str(value["relation_type"]),
+                        "path": str(value["path"]),
+                    }
+                    for value in incoming_rows
+                ],
                 "deleted_at": utc_now(),
             }
+            if row:
+                superseded_rows = connection.execute(
+                    """
+                    SELECT target_document_id FROM document_relations
+                    WHERE source_document_id = ?
+                      AND relation_type = 'supersedes'
+                    """,
+                    (document_id,),
+                ).fetchall()
+                preserved_supersessions = [
+                    str(value["target_document_id"]) for value in superseded_rows
+                ]
+                for target_document_id in preserved_supersessions:
+                    connection.execute(
+                        """
+                        INSERT OR IGNORE INTO supersession_tombstones(
+                            target_document_id, superseder_document_id, created_at
+                        ) VALUES (?, ?, ?)
+                        """,
+                        (target_document_id, document_id, utc_now()),
+                    )
+                if preserved_supersessions:
+                    receipt["preserved_supersessions"] = preserved_supersessions
             if row and row["kind"] == "session":
                 turn = connection.execute(
                     """
@@ -1189,6 +1417,21 @@ class BrainStore:
                 """,
                 (provider, session_id),
             ).fetchall()
+            incoming_rows = connection.execute(
+                """
+                SELECT relation.target_document_id,
+                       relation.source_document_id,
+                       relation.relation_type,
+                       source.path
+                FROM document_relations AS relation
+                JOIN documents AS target
+                  ON target.document_id = relation.target_document_id
+                JOIN documents AS source
+                  ON source.document_id = relation.source_document_id
+                WHERE target.provider = ? AND target.session_id = ?
+                """,
+                (provider, session_id),
+            ).fetchall()
             paths = list(
                 dict.fromkeys(
                     [
@@ -1196,6 +1439,23 @@ class BrainStore:
                         *[str(row["path"]) for row in rows],
                     ]
                 )
+            )
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO supersession_tombstones(
+                    target_document_id, superseder_document_id, created_at
+                )
+                SELECT relation.target_document_id,
+                       relation.source_document_id,
+                       ?
+                FROM document_relations AS relation
+                JOIN documents AS source
+                  ON source.document_id = relation.source_document_id
+                WHERE relation.relation_type = 'supersedes'
+                  AND source.provider = ?
+                  AND source.session_id = ?
+                """,
+                (utc_now(), provider, session_id),
             )
             connection.execute(
                 """
@@ -1217,6 +1477,22 @@ class BrainStore:
                 "session_id": session_id,
                 "found": bool(rows) or bool(prior.get("found")),
                 "paths": paths,
+                "removed_incoming_relations": [
+                    *[
+                        dict(value)
+                        for value in prior.get("removed_incoming_relations", [])
+                        if isinstance(value, dict)
+                    ],
+                    *[
+                        {
+                            "target_document_id": str(value["target_document_id"]),
+                            "source_document_id": str(value["source_document_id"]),
+                            "relation_type": str(value["relation_type"]),
+                            "path": str(value["path"]),
+                        }
+                        for value in incoming_rows
+                    ],
+                ],
                 "deleted_at": prior.get("deleted_at") or utc_now(),
             }
             connection.execute(
@@ -1248,6 +1524,8 @@ class BrainStore:
                 "handoff_outbox",
                 "promotion_outbox",
                 "documents",
+                "document_relations",
+                "supersession_tombstones",
                 "tombstones",
             ):
                 result[table] = int(

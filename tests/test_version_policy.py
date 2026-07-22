@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from argparse import Namespace
@@ -313,10 +314,11 @@ class VersionPolicyTests(unittest.TestCase):
             self.assertTrue(cached.upgrade_required)
             self.assertEqual(cached.source, "cache")
             self.assertEqual(calls, 1)
-            self.assertEqual(
-                home.joinpath("release-policy-cache.json").stat().st_mode & 0o777,
-                0o600,
-            )
+            if os.name != "nt":
+                self.assertEqual(
+                    home.joinpath("release-policy-cache.json").stat().st_mode & 0o777,
+                    0o600,
+                )
 
     def test_current_version_is_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -424,6 +426,7 @@ class VersionPolicyTests(unittest.TestCase):
                 Namespace(command_name="recall"),
                 Path("/unused"),
                 checker=lambda _home, _version: decision,
+                platform_name="darwin",
             )
 
     def test_windows_block_uses_version_pinned_native_installer_remediation(self) -> None:

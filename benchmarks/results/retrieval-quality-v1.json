@@ -224,7 +224,7 @@
     }
   ],
   "wikimap_version": "wikimap 1.1.0",
-  "generated_at": "2026-07-22T15:12:49.498996+00:00",
+  "generated_at": "2026-07-22T15:18:14.082875+00:00",
   "environment": {
     "machine": "arm64",
     "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
@@ -233,7 +233,7 @@
   "provenance": {
     "corpus_sha256": "adc729bcb6a8a8027d11176601046eaeef022bde135c7f225f8e40b78f7a998c",
     "source_manifest_sha256": "dd6e09475e08cff973ff7c4233c872a4cad5ab9a6d80173ef66652b237e41e0b",
-    "git_commit": "3b9f7c59872f82a286675a982a2468ce41f229cc",
-    "git_dirty": true
+    "git_commit": "ae55ce04a362d4c0dab25b09e31d24f8dd1d0b04",
+    "git_dirty": false
   }
 }

@@ -4,6 +4,21 @@ All notable changes to WikiBrain are documented in this file.
 
 The project follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- Retention now uses conversation capture/completion time rather than Markdown
+  registration time and no longer lets stale promotion work protect expired
+  turns indefinitely.
+- Pending prompt deduplication without a provider turn ID now remains idempotent
+  for the full lifetime of the open turn instead of only five seconds.
+- Completed handoff outbox rows migrate into document metadata; forget and
+  retention compact replay fingerprints into one canonical tombstone per source
+  and then one tombstone per otherwise empty session.
+- Forget receipts, installer backups, and managed-skill backups are bounded, and
+  retention removes empty calendar directories.
+
 ## [0.1.3] - 2026-07-21
 
 ### Added

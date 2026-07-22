@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -10,9 +11,15 @@ from contextlib import redirect_stdout
 from datetime import UTC, datetime, timedelta
 from io import StringIO
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import patch
 
-from wikibrain.cli import command_forget, main
+from wikibrain.cli import (
+    _erase_owned_paths,
+    _prune_forget_receipts,
+    command_forget,
+    main,
+)
 from wikibrain.config import BrainConfig
 from wikibrain.curation import Curator
 from wikibrain.hooks import process_hook
@@ -34,7 +41,7 @@ def _config(root: Path) -> tuple[BrainConfig, Path]:
     return config, workspace
 
 
-def _prompt(session: str, turn: str, workspace: Path, text: str) -> dict:
+def _prompt(session: str, turn: str | None, workspace: Path, text: str) -> dict:
     return {
         "session_id": session,
         "turn_id": turn,
@@ -93,6 +100,7 @@ class ReleaseRegressionTests(unittest.TestCase):
                     _forget_args(document=str(document["document_id"])),
                     config.home_path,
                 )
+            self.assertEqual(store.counts()["tombstones"], 1)
 
             process_hook("claude", prompt, config)
             process_hook("claude", stop, config)
@@ -143,6 +151,7 @@ class ReleaseRegressionTests(unittest.TestCase):
             }
             process_hook("claude", compact, config)
             store = BrainStore(config.database_path)
+            self.assertEqual(store.counts()["handoff_outbox"], 0)
             document = next(
                 row
                 for row in store.documents_for_session(
@@ -715,7 +724,7 @@ class ReleaseRegressionTests(unittest.TestCase):
             handoff_marker = "Pending compact marker Silver-614"
             process_hook(
                 "claude",
-                _prompt("pending-retention", "u1", workspace, prompt_marker),
+                _prompt("pending-retention", None, workspace, prompt_marker),
                 config,
             )
             store = BrainStore(config.database_path)
@@ -787,6 +796,25 @@ class ReleaseRegressionTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(store.pending_completed_turns(), [])
             self.assertEqual(store.pending_handoffs(), [])
+            self.assertEqual(store.counts()["sessions"], 0)
+            self.assertEqual(store.counts()["tombstones"], 2)
+            self.assertTrue(store.session_is_forgotten("claude", "pending-retention"))
+            self.assertTrue(
+                store.session_is_forgotten("claude", "pending-handoff-retention")
+            )
+            captured, _ = store.capture_stop(
+                NormalizedEvent(
+                    provider="claude",
+                    name="Stop",
+                    session_id="pending-retention",
+                    turn_id=None,
+                    cwd=str(workspace),
+                ),
+                "late replayed response",
+                0,
+            )
+            self.assertFalse(captured)
+            self.assertEqual(store.pending_completed_turns(), [])
             store.checkpoint()
             persisted = b"".join(
                 path.read_bytes()
@@ -796,7 +824,206 @@ class ReleaseRegressionTests(unittest.TestCase):
             self.assertNotIn(prompt_marker.encode(), persisted)
             self.assertNotIn(handoff_marker.encode(), persisted)
 
-    def test_retention_preserves_pending_explicit_memory_promotions(self) -> None:
+    def test_retention_blocks_inflight_turn_archive_after_source_prune(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config, workspace = _config(root)
+            session_id = "retention-archive-race"
+            store = BrainStore(config.database_path)
+            old_event = NormalizedEvent(
+                provider="claude",
+                name="UserPromptSubmit",
+                session_id=session_id,
+                turn_id="old-turn",
+                cwd=str(workspace),
+            )
+            captured, _ = store.capture_prompt(old_event, "expired secret", 0)
+            self.assertTrue(captured)
+            captured, _ = store.capture_stop(
+                NormalizedEvent(
+                    provider="claude",
+                    name="Stop",
+                    session_id=session_id,
+                    turn_id="old-turn",
+                    cwd=str(workspace),
+                ),
+                "expired response",
+                0,
+            )
+            self.assertTrue(captured)
+            stale_turn = next(
+                row
+                for row in store.pending_completed_turns()
+                if row["turn_key"] == "old-turn"
+            )
+            captured, _ = store.capture_prompt(
+                NormalizedEvent(
+                    provider="claude",
+                    name="UserPromptSubmit",
+                    session_id=session_id,
+                    turn_id="new-turn",
+                    cwd=str(workspace),
+                ),
+                "live prompt",
+                0,
+            )
+            self.assertTrue(captured)
+            old = (datetime.now(UTC) - timedelta(days=120)).isoformat()
+            cutoff = (datetime.now(UTC) - timedelta(days=90)).isoformat()
+            with store.transaction() as connection:
+                connection.execute(
+                    """
+                    UPDATE turns SET created_at = ?, completed_at = ?
+                    WHERE provider = 'claude' AND session_id = ?
+                      AND turn_key = 'old-turn'
+                    """,
+                    (old, old, session_id),
+                )
+                connection.execute(
+                    """
+                    UPDATE events SET created_at = ?
+                    WHERE provider = 'claude' AND session_id = ?
+                      AND turn_key = 'old-turn'
+                    """,
+                    (old, session_id),
+                )
+
+            store.prune_expired_raw_evidence(cutoff)
+            self.assertFalse(store.session_is_forgotten("claude", session_id))
+            document_id, path = Curator(
+                config,
+                store,
+                cast(
+                    Any,
+                    type("ImmediateWikimap", (), {"update": lambda self: None})(),
+                ),
+            ).archive_turn(stale_turn)
+            self.assertFalse(path.exists())
+            self.assertIsNone(store.document(document_id))
+            with store.connect() as connection:
+                live = connection.execute(
+                    """
+                    SELECT response FROM turns
+                    WHERE provider = 'claude' AND session_id = ?
+                      AND turn_key = 'new-turn'
+                    """,
+                    (session_id,),
+                ).fetchone()
+            self.assertIsNotNone(live)
+            self.assertIsNone(live["response"])
+
+    def test_retention_blocks_inflight_handoff_archive_after_source_prune(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config, workspace = _config(root)
+            store = BrainStore(config.database_path)
+            session_id = "retention-handoff-race"
+            summary = "expired handoff secret"
+            captured, stale_handoff = store.capture_handoff(
+                NormalizedEvent(
+                    provider="claude",
+                    name="PostCompact",
+                    session_id=session_id,
+                    turn_id=None,
+                    cwd=str(workspace),
+                ),
+                summary,
+                0,
+            )
+            self.assertTrue(captured)
+            self.assertIsNotNone(stale_handoff)
+            assert stale_handoff is not None
+            event_key = str(stale_handoff["event_key"])
+            captured, _ = store.capture_prompt(
+                NormalizedEvent(
+                    provider="claude",
+                    name="UserPromptSubmit",
+                    session_id=session_id,
+                    turn_id="new-turn",
+                    cwd=str(workspace),
+                ),
+                "live prompt",
+                0,
+            )
+            self.assertTrue(captured)
+            old = (datetime.now(UTC) - timedelta(days=120)).isoformat()
+            cutoff = (datetime.now(UTC) - timedelta(days=90)).isoformat()
+            with store.transaction() as connection:
+                connection.execute(
+                    "UPDATE events SET created_at = ? WHERE event_key = ?",
+                    (old, event_key),
+                )
+                connection.execute(
+                    "UPDATE handoff_outbox SET created_at = ? WHERE event_key = ?",
+                    (old, event_key),
+                )
+
+            store.prune_expired_raw_evidence(cutoff)
+            self.assertFalse(store.session_is_forgotten("claude", session_id))
+            document_id, path = Curator(
+                config,
+                store,
+                cast(
+                    Any,
+                    type("ImmediateWikimap", (), {"update": lambda self: None})(),
+                ),
+            ).archive_handoff(
+                "claude",
+                session_id,
+                str(workspace),
+                summary,
+                event_key=str(event_key),
+                captured_at=str(stale_handoff["created_at"]),
+            )
+            self.assertFalse(path.exists())
+            self.assertIsNone(store.document(document_id))
+
+    def test_retention_compacts_orphan_source_tombstones_without_other_work(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config, _ = _config(root)
+            store = BrainStore(config.database_path)
+            with store.transaction() as connection:
+                store._insert_tombstone(
+                    connection,
+                    "source-turn:claude:orphan-session:t1",
+                    "legacy-retention",
+                    {
+                        "provider": "claude",
+                        "session_id": "orphan-session",
+                        "turn_key": "t1",
+                    },
+                )
+                store._insert_tombstone(
+                    connection,
+                    "source-prompt:claude:orphan-session:prompt-hash",
+                    "legacy-retention",
+                    {
+                        "provider": "claude",
+                        "session_id": "orphan-session",
+                        "turn_key": "t1",
+                    },
+                )
+
+            output = StringIO()
+            with redirect_stdout(output):
+                code = main(
+                    [
+                        "--home",
+                        str(config.home_path),
+                        "retention",
+                        "--apply",
+                        "--json",
+                    ]
+                )
+            self.assertEqual(code, 0)
+            self.assertIn('"compacted_sessions": 1', output.getvalue())
+            self.assertEqual(store.counts()["tombstones"], 1)
+            self.assertTrue(
+                store.session_is_forgotten("claude", "orphan-session")
+            )
+
+    def test_retention_bounds_failed_explicit_memory_promotions(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             config, workspace = _config(root)
@@ -869,18 +1096,34 @@ class ReleaseRegressionTests(unittest.TestCase):
                 )
                 connection.execute(
                     """
-                    UPDATE documents SET created_at = ?
+                    UPDATE documents
+                    SET created_at = ?,
+                        metadata_json = json_set(
+                            metadata_json, '$.captured_at', ?
+                        )
                     WHERE document_id = ?
                     """,
-                    (old, archived_id),
+                    (old, old, archived_id),
                 )
 
-            before = datetime.now(UTC).isoformat()
+            before = (datetime.now(UTC) - timedelta(days=90)).isoformat()
             self.assertEqual(
                 store.expired_raw_evidence_counts(before)["pending_turns"],
-                0,
+                1,
             )
-            self.assertEqual(store.expired_documents("session", before), [])
+            self.assertEqual(
+                [str(row["document_id"]) for row in store.expired_documents("session", before)],
+                [archived_id],
+            )
+            with store.transaction() as connection:
+                connection.execute(
+                    "UPDATE documents SET metadata_json = ? WHERE document_id = ?",
+                    ("{malformed", archived_id),
+                )
+            self.assertEqual(
+                [str(row["document_id"]) for row in store.expired_documents("session", before)],
+                [archived_id],
+            )
 
             with redirect_stdout(StringIO()):
                 code = main(
@@ -895,8 +1138,8 @@ class ReleaseRegressionTests(unittest.TestCase):
                     ]
                 )
             self.assertEqual(code, 0)
-            self.assertEqual(len(store.pending_promotions()), 2)
-            self.assertIsNotNone(store.document(archived_id))
+            self.assertEqual(store.pending_promotions(), [])
+            self.assertIsNone(store.document(archived_id))
             with store.connect() as connection:
                 self.assertEqual(
                     connection.execute(
@@ -905,7 +1148,7 @@ class ReleaseRegressionTests(unittest.TestCase):
                         WHERE session_id LIKE 'promotion-retention-%'
                         """
                     ).fetchone()[0],
-                    2,
+                    0,
                 )
 
             process_hook(
@@ -920,16 +1163,218 @@ class ReleaseRegressionTests(unittest.TestCase):
             )
             self.assertEqual(store.pending_promotions(), [])
             for session_id in sessions:
-                self.assertIn(
-                    "memory",
-                    {
-                        row["kind"]
-                        for row in store.documents_for_session(
-                            session_id,
-                            "claude",
-                        )
-                    },
+                self.assertEqual(
+                    store.documents_for_session(session_id, "claude"),
+                    [],
                 )
+
+    def test_schema_v8_compacts_legacy_lifecycle_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config, workspace = _config(root)
+            store = BrainStore(config.database_path)
+            event = NormalizedEvent(
+                provider="claude",
+                name="PostCompact",
+                session_id="legacy-handoff",
+                turn_id=None,
+                cwd=str(workspace),
+            )
+            captured, handoff = store.capture_handoff(event, "legacy summary", 0)
+            self.assertTrue(captured)
+            assert handoff is not None
+            document_id, _ = Curator(
+                config,
+                store,
+                cast(Any, type("ImmediateWikimap", (), {"update": lambda self: None})()),
+            ).archive_handoff("claude", "legacy-handoff", str(workspace), "legacy summary")
+            source_document = "legacy-document"
+            base_receipt = {
+                "source_document": source_document,
+                "provider": "claude",
+                "session_id": "legacy-turn",
+                "turn_key": "t1",
+            }
+            with store.transaction() as connection:
+                connection.execute(
+                    "UPDATE handoff_outbox SET document_id = ? WHERE event_key = ?",
+                    (document_id, str(handoff["event_key"])),
+                )
+                store._insert_tombstone(
+                    connection,
+                    f"document:{source_document}",
+                    "test",
+                    {"provider": "claude", "session_id": "legacy-turn"},
+                )
+                for selector in (
+                    "source-turn:claude:legacy-turn:t1",
+                    "source-prompt:claude:legacy-turn:prompt-hash",
+                    "source-response:claude:legacy-turn:response-hash",
+                ):
+                    store._insert_tombstone(
+                        connection, selector, "test", dict(base_receipt)
+                    )
+                connection.execute(
+                    """
+                    INSERT INTO tombstones(
+                        tombstone_id, selector, reason, created_at, receipt_json
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "malformed-legacy",
+                        "source-event:malformed-legacy",
+                        "test",
+                        datetime.now(UTC).isoformat(),
+                        "{not-json",
+                    ),
+                )
+                connection.execute(
+                    "UPDATE metadata SET value = '6' WHERE key = 'schema_version'"
+                )
+
+            migrated = BrainStore(config.database_path)
+            self.assertEqual(migrated.counts()["handoff_outbox"], 0)
+            self.assertEqual(migrated.counts()["tombstones"], 2)
+            handoff_document = migrated.document(document_id)
+            assert handoff_document is not None
+            metadata = json.loads(str(handoff_document["metadata_json"]))
+            self.assertEqual(metadata["source_event_key"], str(handoff["event_key"]))
+            receipt = migrated.tombstone_receipt(f"document:{source_document}")
+            assert receipt is not None
+            self.assertEqual(receipt["prompt_hash"], "prompt-hash")
+            self.assertEqual(receipt["response_hash"], "response-hash")
+
+    def test_no_turn_id_prompt_remains_idempotent_while_original_is_pending(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config, workspace = _config(root)
+            store = BrainStore(config.database_path)
+            event = NormalizedEvent(
+                provider="claude",
+                name="UserPromptSubmit",
+                session_id="long-pending-dedupe",
+                turn_id=None,
+                cwd=str(workspace),
+            )
+            captured, turn_key = store.capture_prompt(event, "same pending prompt", 0)
+            self.assertTrue(captured)
+            old = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+            with store.transaction() as connection:
+                connection.execute(
+                    "UPDATE turns SET created_at = ? WHERE turn_key = ?",
+                    (old, turn_key),
+                )
+
+            duplicate, duplicate_key = store.capture_prompt(
+                event, "same pending prompt", 0
+            )
+
+            self.assertFalse(duplicate)
+            self.assertEqual(duplicate_key, turn_key)
+            self.assertEqual(store.counts()["turns"], 1)
+
+    def test_owned_file_erasure_prunes_empty_calendar_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config, _ = _config(root)
+            path = (
+                config.vault_path
+                / "sessions"
+                / "2020"
+                / "01"
+                / "02"
+                / "turn.md"
+            )
+            path.parent.mkdir(parents=True)
+            path.write_text("old", encoding="utf-8")
+
+            _erase_owned_paths(config, [str(path)])
+
+            self.assertFalse(path.exists())
+            self.assertFalse((config.vault_path / "sessions").exists())
+
+    def test_forget_receipts_keep_only_the_newest_hundred(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            receipts = Path(temporary)
+            for index in range(105):
+                path = receipts / f"forget-{index:03d}.json"
+                path.write_text("{}\n", encoding="utf-8")
+                os.utime(path, (index, index))
+
+            _prune_forget_receipts(receipts)
+
+            remaining = sorted(receipts.glob("forget-*.json"))
+            self.assertEqual(len(remaining), 100)
+            self.assertEqual(remaining[0].name, "forget-005.json")
+
+    def test_retention_uses_conversation_time_and_does_not_protect_stale_promotions_forever(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config, workspace = _config(root)
+            store = BrainStore(config.database_path)
+            old = (datetime.now(UTC) - timedelta(days=120)).isoformat()
+            cutoff = (datetime.now(UTC) - timedelta(days=90)).isoformat()
+
+            for session_id in ("late-archive", "never-archived"):
+                prompt_event = NormalizedEvent(
+                    provider="claude",
+                    name="UserPromptSubmit",
+                    session_id=session_id,
+                    turn_id="p1",
+                    cwd=str(workspace),
+                )
+                store.capture_prompt(prompt_event, f"remember {session_id}", 0)
+                _, turn = store.capture_stop(
+                    NormalizedEvent(
+                        provider="claude",
+                        name="Stop",
+                        session_id=session_id,
+                        turn_id="p1",
+                        cwd=str(workspace),
+                    ),
+                    "done",
+                    0,
+                )
+                self.assertIsNotNone(turn)
+                self.assertTrue(store.queue_promotion("claude", session_id, "p1"))
+                with store.transaction() as connection:
+                    connection.execute(
+                        """
+                        UPDATE turns SET created_at = ?, completed_at = ?
+                        WHERE provider = 'claude' AND session_id = ? AND turn_key = 'p1'
+                        """,
+                        (old, old, session_id),
+                    )
+                    connection.execute(
+                        """
+                        UPDATE promotion_outbox SET created_at = ?
+                        WHERE provider = 'claude' AND session_id = ? AND turn_key = 'p1'
+                        """,
+                        (old, session_id),
+                    )
+
+            late_turn = next(
+                turn
+                for turn in store.pending_completed_turns()
+                if turn["session_id"] == "late-archive"
+            )
+            late_document_id, _ = Curator(
+                config,
+                store,
+                type("ImmediateWikimap", (), {"update": lambda self: None})(),
+            ).archive_turn(late_turn)
+
+            expired = store.expired_documents("session", cutoff)
+            self.assertEqual(
+                [str(row["document_id"]) for row in expired],
+                [late_document_id],
+            )
+            self.assertEqual(
+                store.expired_raw_evidence_counts(cutoff)["pending_turns"],
+                1,
+            )
 
     def test_doctor_uses_the_installed_claude_only_custom_path(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

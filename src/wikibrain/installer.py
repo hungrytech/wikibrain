@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import sys
@@ -335,6 +336,16 @@ def _backup(path: Path) -> Path | None:
     backup = path.with_name(f"{path.name}.wikibrain.{stamp}.bak")
     ensure_private_directory(backup.parent)
     shutil.copy2(path, backup)
+    backup_pattern = re.compile(
+        rf"{re.escape(path.name)}\.wikibrain\.\d{{8}}T\d{{12}}Z\.bak"
+    )
+    backups = sorted(
+        candidate
+        for candidate in path.parent.glob(f"{path.name}.wikibrain.*.bak")
+        if candidate.is_file() and backup_pattern.fullmatch(candidate.name)
+    )
+    for expired in backups[:-3]:
+        expired.unlink(missing_ok=True)
     return backup
 
 

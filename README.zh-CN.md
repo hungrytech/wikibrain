@@ -333,7 +333,13 @@ brainctl retention --apply
 - 归档是经过脱敏的明文，并未在应用层加密。请使用 FileVault、BitLocker 或 LUKS。
 - `remember` 默认限定在项目范围内。仅在确有需要时使用 `--global`。
 - 保留机制会移除过期的会话和交接证据，但绝不会移除明确的持久记忆；
-  不带 `--apply` 时只会预览。
+  不带 `--apply` 时只会预览。截止时间依据证据的 `captured_at`，而不是稍后的
+  文档注册时间；长期失败的 promotion 不会无限期保护过期 turn。
+- 已完成的 handoff 行会压缩到文档 metadata 中。每个已删除 source 只保留一条
+  用于防止 replay 的 canonical tombstone；当 session 已无任何内容时，retention
+  会把其 tombstone 再压缩为一条 session tombstone。若使 fingerprint 过期，
+  重放内容可能复活，因此它们不会过期。forget 回执只保留最新 100 个，
+  installer backup 每个目标只保留最新 3 个，并在 retention 后移除空的日期目录。
 - 普通文档删除只会移除该页面。先用 `--cascade` 预览对源对话的影响，
   再在同一命令中添加 `--apply` 以同时删除两者。
 - 使用 `WIKIBRAIN_HOME` 或 `brainctl --home PATH` 覆盖状态数据的位置。

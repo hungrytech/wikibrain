@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -54,6 +55,13 @@ def _managed(path: Path) -> bool:
         return False
 
 
+def _remove_path(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    else:
+        shutil.rmtree(path)
+
+
 def install_skills(
     clients: list[str],
     *,
@@ -96,11 +104,25 @@ def install_skills(
             )
             shutil.rmtree(temporary)
             shutil.copytree(source, temporary)
+            backup: Path | None = None
             if target.exists():
                 stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
                 backup = target.with_name(f"wikibrain.{stamp}.bak")
                 os.replace(target, backup)
-            os.replace(temporary, target)
+            try:
+                os.replace(temporary, target)
+            except OSError:
+                if backup is not None and not target.exists():
+                    os.replace(backup, target)
+                raise
+            backup_pattern = re.compile(r"wikibrain\.\d{8}T\d{12}Z\.bak")
+            backups = sorted(
+                candidate
+                for candidate in target.parent.glob("wikibrain.*.bak")
+                if backup_pattern.fullmatch(candidate.name)
+            )
+            for expired in backups[:-3]:
+                _remove_path(expired)
         results.append(
             {
                 "client": client,
@@ -125,7 +147,7 @@ def uninstall_skills(
     for client, target in selected.items():
         owned = target.exists() and _managed(target)
         if owned and not dry_run:
-            shutil.rmtree(target)
+            _remove_path(target)
         results.append(
             {
                 "client": client,

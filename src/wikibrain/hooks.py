@@ -79,6 +79,8 @@ def _drain_pending_archives(
                 str(handoff["session_id"]),
                 str(handoff["workspace"]),
                 str(handoff["summary"]),
+                event_key=str(handoff["event_key"]),
+                captured_at=str(handoff["created_at"]),
             )
             if store.document(document_id) is not None:
                 store.complete_handoff(str(handoff["event_key"]), document_id)
@@ -180,6 +182,8 @@ def process_hook(
                     str(handoff["session_id"]),
                     str(handoff["workspace"]),
                     str(handoff["summary"]),
+                    event_key=str(handoff["event_key"]),
+                    captured_at=str(handoff["created_at"]),
                 )
                 if store.document(document_id) is not None:
                     store.complete_handoff(str(handoff["event_key"]), document_id)

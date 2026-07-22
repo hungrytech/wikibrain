@@ -362,7 +362,15 @@ brainctl retention --apply
   FileVault, BitLocker, or LUKS.
 - `remember` is project-scoped by default. Use `--global` only intentionally.
 - Retention removes expired session and handoff evidence, never explicit durable
-  memories, and is preview-only without `--apply`.
+  memories, and is preview-only without `--apply`. The cutoff uses the evidence
+  `captured_at` time, not its later registration time; stale promotion work does
+  not protect expired turns indefinitely.
+- Completed handoff rows are compacted into document metadata. Each forgotten
+  source keeps one canonical anti-replay tombstone, and retention folds all
+  tombstones from an otherwise empty session into one session tombstone. These
+  fingerprints do not expire because doing so could resurrect replayed content.
+  WikiBrain keeps the newest 100 forget receipts and three installer backups per
+  target, and removes empty calendar directories after retention.
 - A plain document deletion removes that page. Use `--cascade` to preview the
   source conversation impact, then repeat it with `--apply` to erase both.
 - Override the state location with `WIKIBRAIN_HOME` or `brainctl --home PATH`.

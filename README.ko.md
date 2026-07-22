@@ -357,7 +357,15 @@ brainctl retention --apply
 - `remember`는 기본적으로 프로젝트 범위입니다. `--global`은 의도적으로만
   사용하세요.
 - 보존 기간 정리는 만료된 세션과 handoff 근거만 제거하고 명시적인 장기 기억은
-  지우지 않습니다. `--apply`가 없으면 미리보기만 합니다.
+  지우지 않습니다. `--apply`가 없으면 미리보기만 합니다. 기준 시각은 나중의
+  문서 등록 시각이 아니라 근거의 `captured_at`이며, 오래 실패한 promotion 작업은
+  만료 turn을 무기한 보호하지 않습니다.
+- 완료된 handoff 행은 문서 metadata로 압축합니다. 삭제된 source마다 replay 방지용
+  canonical tombstone 하나를 유지하고, retention은 내용이 모두 사라진 session의
+  tombstone을 session tombstone 하나로 다시 압축합니다. 이를 만료시키면 replay된
+  내용이 부활할 수 있어 fingerprint는 만료하지 않습니다. forget 영수증은 최신
+  100개, installer backup은 대상별 최신 3개만 유지하고 retention 후 빈 날짜
+  디렉터리를 제거합니다.
 - 일반 문서 삭제는 해당 페이지만 지웁니다. 원본 대화도 지우려면 `--cascade`로
   영향을 확인한 뒤 같은 명령에 `--apply`를 추가해 둘 다 삭제하세요.
 - `WIKIBRAIN_HOME` 또는 `brainctl --home PATH`로 저장 위치를 바꿀 수 있습니다.

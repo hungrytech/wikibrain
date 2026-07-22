@@ -75,7 +75,7 @@ class ForgetTests(unittest.TestCase):
             self.assertEqual(store.counts()["turns"], 0)
             self.assertEqual(store.counts()["events"], 0)
             tombstones_after_first_apply = store.counts()["tombstones"]
-            self.assertGreaterEqual(tombstones_after_first_apply, 4)
+            self.assertEqual(tombstones_after_first_apply, 1)
             with redirect_stdout(StringIO()):
                 command_forget(apply_args, config.home_path)
             self.assertEqual(

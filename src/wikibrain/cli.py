@@ -539,6 +539,24 @@ def _erase_owned_paths(config: BrainConfig, values: list[str]) -> None:
             path.unlink(missing_ok=True)
         except OSError as error:
             raise RuntimeError(f"could not erase owned memory file: {path}") from error
+        parent = path.parent
+        while parent != vault:
+            try:
+                parent.rmdir()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                break
+            parent = parent.parent
+
+
+def _prune_forget_receipts(directory: Path, keep: int = 100) -> None:
+    receipts = sorted(
+        directory.glob("forget-*.json"),
+        key=lambda path: (path.stat().st_mtime_ns, path.name),
+    )
+    for expired in receipts[:-keep]:
+        expired.unlink(missing_ok=True)
 
 
 def _drain_relation_cleanup_outbox(curator: Curator, store: BrainStore) -> int:
@@ -660,6 +678,7 @@ def command_forget(args: argparse.Namespace, home: Path) -> int:
     atomic_write_text(
         receipt_path, json.dumps(receipt, ensure_ascii=False, indent=2) + "\n"
     )
+    _prune_forget_receipts(receipt_path.parent)
     _emit(receipt, args.json)
     return 0
 
@@ -695,8 +714,15 @@ def command_retention(args: argparse.Namespace, home: Path) -> int:
         "count": len(rows) + raw_count,
         "dry_run": not args.apply,
     }
-    if not args.apply or (
-        not rows and raw_count == 0 and pending_relation_cleanups == 0
+    if not args.apply:
+        _emit(preview, args.json)
+        return 0
+    compacted_sessions = store.compact_empty_sessions("retention")
+    if (
+        not rows
+        and raw_count == 0
+        and pending_relation_cleanups == 0
+        and compacted_sessions == 0
     ):
         _emit(preview, args.json)
         return 0
@@ -709,6 +735,7 @@ def command_retention(args: argparse.Namespace, home: Path) -> int:
         for row in rows
     ]
     raw_deleted = store.prune_expired_raw_evidence(before)
+    compacted_sessions += store.compact_empty_sessions("retention")
     _erase_owned_paths(
         config,
         [
@@ -730,6 +757,7 @@ def command_retention(args: argparse.Namespace, home: Path) -> int:
             "dry_run": False,
             "deleted": len(receipts) + sum(raw_deleted.values()),
             "raw_deleted": raw_deleted,
+            "compacted_sessions": compacted_sessions,
             "relation_cleanups": relation_cleanups,
             "index_updated": index_updated,
         }

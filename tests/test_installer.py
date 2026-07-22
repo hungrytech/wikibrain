@@ -90,6 +90,26 @@ class InstallerTests(unittest.TestCase):
         backups = list(self.claude.parent.glob("settings.json.wikibrain.*.bak"))
         self.assertEqual(len(backups), 1)
 
+    def test_install_keeps_only_the_three_newest_backups(self) -> None:
+        manual = self.claude.with_name("settings.json.wikibrain.manual.bak")
+        manual.write_text("manual backup", encoding="utf-8")
+        for _ in range(4):
+            install_hooks(
+                self.config,
+                ["claude"],
+                command="/opt/homebrew/bin/brainctl",
+                paths=self.paths,
+            )
+            uninstall_hooks(self.config, ["claude"], paths=self.paths)
+
+        backups = sorted(
+            path
+            for path in self.claude.parent.glob("settings.json.wikibrain.*.bak")
+            if path != manual
+        )
+        self.assertEqual(len(backups), 3)
+        self.assertTrue(manual.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1008,8 +1008,15 @@ class MemorySafetyTests(unittest.TestCase):
             old_timestamp = (datetime.now(UTC) - timedelta(days=120)).isoformat()
             with store.transaction() as connection:
                 connection.execute(
-                    "UPDATE documents SET created_at = ? WHERE session_id = 'old'",
-                    (old_timestamp,),
+                    """
+                    UPDATE documents
+                    SET created_at = ?,
+                        metadata_json = json_set(
+                            metadata_json, '$.captured_at', ?
+                        )
+                    WHERE session_id = 'old'
+                    """,
+                    (old_timestamp, old_timestamp),
                 )
             old_document_id = str(
                 store.documents_for_session("old")[0]["document_id"]

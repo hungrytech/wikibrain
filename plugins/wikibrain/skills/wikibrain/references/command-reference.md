@@ -52,8 +52,15 @@ collide across clients, so use `--provider claude` or `--provider codex`; the
 CLI requires it whenever a unique provider cannot be inferred safely.
 
 `brainctl retention --apply` uses the configured 90-day default unless
-`--days` is supplied. It also prunes expired unarchived SQLite evidence after
-failed handoff writes, and never prunes explicit durable memories.
+`--days` is supplied. The cutoff is each evidence item's `captured_at` (or the
+raw turn completion time), not a later Markdown registration time. It prunes
+expired unarchived SQLite evidence and stale promotion work after failed writes,
+but never explicit durable memories. Completed handoff outbox rows are compacted
+into document metadata; forget uses one canonical anti-replay tombstone per
+source, and retention folds an otherwise empty session down to one session
+tombstone. Tombstone fingerprints do not expire because that could resurrect
+replayed content. The newest 100 forget receipts and three installer backups per
+target are kept, and empty date directories are removed after retention.
 
 ## Trust boundaries
 

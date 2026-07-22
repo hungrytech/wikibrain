@@ -119,8 +119,15 @@ captured_at: {_yaml_string(completed)}
         session_id: str,
         workspace: str,
         summary: str,
+        *,
+        event_key: str | None = None,
+        captured_at: str | None = None,
     ) -> tuple[str, Path]:
-        now = datetime.now(UTC)
+        captured = captured_at or datetime.now(UTC).isoformat(timespec="milliseconds")
+        try:
+            moment = datetime.fromisoformat(captured)
+        except ValueError:
+            moment = datetime.now(UTC)
         document_id = handoff_document_id(
             provider,
             session_id,
@@ -129,8 +136,8 @@ captured_at: {_yaml_string(completed)}
         )
         relative = (
             Path("handoffs")
-            / now.strftime("%Y")
-            / now.strftime("%m")
+            / moment.strftime("%Y")
+            / moment.strftime("%m")
             / f"{_safe_name(provider)}-{document_id}.md"
         )
         content = f"""---
@@ -139,7 +146,7 @@ type: "handoff"
 provider: {_yaml_string(provider)}
 session_id: {_yaml_string(session_id)}
 workspace: {_yaml_string(workspace)}
-captured_at: {_yaml_string(now.isoformat(timespec="milliseconds"))}
+captured_at: {_yaml_string(captured)}
 ---
 
 # Compaction handoff
@@ -154,6 +161,10 @@ captured_at: {_yaml_string(now.isoformat(timespec="milliseconds"))}
             provider=provider,
             session_id=session_id,
             workspace=workspace,
+            metadata={
+                "captured_at": captured,
+                **({"source_event_key": event_key} if event_key else {}),
+            },
         )
         if not registered:
             path.unlink(missing_ok=True)

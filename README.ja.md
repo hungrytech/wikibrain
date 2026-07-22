@@ -306,7 +306,8 @@ brainctl retention --apply
 - ツールの完全な出力とシェルコマンドはアーカイブされません。安全なポインターだけが保存されます。
 - アーカイブはマスキング済みの平文であり、アプリケーションレベルでは暗号化されていません。FileVault、BitLocker、または LUKS を使用してください。
 - `remember` はデフォルトでプロジェクトスコープです。`--global` は意図した場合にだけ使用してください。
-- 保持処理は期限切れのセッションと引き継ぎの証拠を削除しますが、明示的な永続記憶は削除しません。また、`--apply` を付けない限りプレビューのみです。
+- 保持処理は期限切れのセッションと引き継ぎの証拠を削除しますが、明示的な永続記憶は削除しません。また、`--apply` を付けない限りプレビューのみです。期限の基準は後から登録された時刻ではなく証拠の `captured_at` であり、失敗した promotion が古い turn を無期限に保護することはありません。
+- 完了済みの handoff 行はドキュメント metadata に集約されます。削除された source ごとに replay 防止用の canonical tombstone を 1 行保持し、内容がなくなった session の tombstone は retention が session tombstone 1 行に再集約します。期限切れにすると replay された内容が復活し得るため fingerprint は失効させません。forget receipt は最新 100 件、installer backup は対象ごとに最新 3 件だけを残し、retention 後の空の日付ディレクトリは削除します。
 - 通常のドキュメント削除ではそのページだけを削除します。`--cascade` でソース会話への影響をプレビューし、同じコマンドに `--apply` を追加して両方を削除してください。
 - 状態の保存場所は `WIKIBRAIN_HOME` または `brainctl --home PATH` で上書きできます。
 

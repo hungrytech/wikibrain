@@ -6,7 +6,7 @@ import os
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterator, Literal
 
@@ -14,7 +14,7 @@ from .config import PRIVATE_FILE_MODE, ensure_private_directory
 from .models import NormalizedEvent
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 8
 
 
 class ClosingConnection(sqlite3.Connection):
@@ -282,6 +282,39 @@ class BrainStore:
                     receipt_json TEXT NOT NULL
                 );
 
+                CREATE INDEX IF NOT EXISTS idx_tombstones_source_turn
+                    ON tombstones(
+                        CASE WHEN json_valid(receipt_json)
+                            THEN json_extract(receipt_json, '$.provider') END,
+                        CASE WHEN json_valid(receipt_json)
+                            THEN json_extract(receipt_json, '$.session_id') END,
+                        CASE WHEN json_valid(receipt_json)
+                            THEN json_extract(receipt_json, '$.turn_key') END
+                    );
+                CREATE INDEX IF NOT EXISTS idx_tombstones_source_prompt
+                    ON tombstones(
+                        CASE WHEN json_valid(receipt_json)
+                            THEN json_extract(receipt_json, '$.provider') END,
+                        CASE WHEN json_valid(receipt_json)
+                            THEN json_extract(receipt_json, '$.session_id') END,
+                        CASE WHEN json_valid(receipt_json)
+                            THEN json_extract(receipt_json, '$.prompt_hash') END
+                    );
+                CREATE INDEX IF NOT EXISTS idx_tombstones_source_response
+                    ON tombstones(
+                        CASE WHEN json_valid(receipt_json)
+                            THEN json_extract(receipt_json, '$.provider') END,
+                        CASE WHEN json_valid(receipt_json)
+                            THEN json_extract(receipt_json, '$.session_id') END,
+                        CASE WHEN json_valid(receipt_json)
+                            THEN json_extract(receipt_json, '$.response_hash') END
+                    );
+                CREATE INDEX IF NOT EXISTS idx_tombstones_source_handoff
+                    ON tombstones(
+                        CASE WHEN json_valid(receipt_json)
+                            THEN json_extract(receipt_json, '$.event_key') END
+                    );
+
                 CREATE INDEX IF NOT EXISTS idx_turns_workspace
                     ON turns(cwd, completed_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_documents_workspace
@@ -294,6 +327,10 @@ class BrainStore:
             )
             if existing_version < 6:
                 self._backfill_relation_cleanups(connection)
+            if existing_version < 7:
+                self._compact_completed_handoffs(connection)
+            if existing_version < 8:
+                self._compact_legacy_tombstones(connection)
             self._validate_schema(connection)
             connection.execute(
                 "INSERT OR REPLACE INTO metadata(key, value) VALUES('schema_version', ?)",
@@ -333,6 +370,97 @@ class BrainStore:
                     ) VALUES (?, ?, ?)
                     """,
                     (str(source_path), str(target_document_id), utc_now()),
+                )
+
+    @staticmethod
+    def _compact_completed_handoffs(connection: sqlite3.Connection) -> None:
+        rows = connection.execute(
+            """
+            SELECT handoff_outbox.event_key, handoff_outbox.created_at,
+                   handoff_outbox.document_id, documents.metadata_json
+            FROM handoff_outbox
+            JOIN documents
+              ON documents.document_id = handoff_outbox.document_id
+            WHERE handoff_outbox.document_id IS NOT NULL
+            """
+        ).fetchall()
+        for row in rows:
+            try:
+                metadata = json.loads(str(row["metadata_json"]))
+            except (TypeError, json.JSONDecodeError):
+                metadata = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            metadata["source_event_key"] = str(row["event_key"])
+            metadata.setdefault("captured_at", str(row["created_at"]))
+            connection.execute(
+                "UPDATE documents SET metadata_json = ? WHERE document_id = ?",
+                (
+                    json.dumps(metadata, ensure_ascii=False),
+                    str(row["document_id"]),
+                ),
+            )
+            connection.execute(
+                "DELETE FROM handoff_outbox WHERE event_key = ?",
+                (str(row["event_key"]),),
+            )
+
+    @staticmethod
+    def _compact_legacy_tombstones(connection: sqlite3.Connection) -> None:
+        rows = connection.execute(
+            "SELECT * FROM tombstones WHERE selector LIKE 'source-%'"
+        ).fetchall()
+        for row in rows:
+            selector = str(row["selector"])
+            try:
+                receipt = json.loads(str(row["receipt_json"]))
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(receipt, dict):
+                continue
+            if selector.startswith("source-prompt:"):
+                receipt["prompt_hash"] = selector.rsplit(":", 1)[-1]
+            elif selector.startswith("source-response:"):
+                receipt["response_hash"] = selector.rsplit(":", 1)[-1]
+            elif selector.startswith("source-handoff:"):
+                receipt["event_key"] = selector.removeprefix("source-handoff:")
+
+            target_selector = selector
+            source_document = receipt.get("source_document")
+            if source_document:
+                candidate = f"document:{source_document}"
+                if BrainStore._has_tombstone(connection, candidate):
+                    target_selector = candidate
+            elif receipt.get("provider") and receipt.get("session_id") and receipt.get(
+                "turn_key"
+            ):
+                candidate = (
+                    f"source-turn:{receipt['provider']}:{receipt['session_id']}:"
+                    f"{receipt['turn_key']}"
+                )
+                if BrainStore._has_tombstone(connection, candidate):
+                    target_selector = candidate
+
+            target = connection.execute(
+                "SELECT receipt_json FROM tombstones WHERE selector = ?",
+                (target_selector,),
+            ).fetchone()
+            if target is None:
+                continue
+            try:
+                merged = json.loads(str(target["receipt_json"]))
+            except (TypeError, json.JSONDecodeError):
+                merged = {}
+            if not isinstance(merged, dict):
+                merged = {}
+            merged.update({key: value for key, value in receipt.items() if value is not None})
+            connection.execute(
+                "UPDATE tombstones SET receipt_json = ? WHERE selector = ?",
+                (json.dumps(merged, ensure_ascii=False), target_selector),
+            )
+            if target_selector != selector:
+                connection.execute(
+                    "DELETE FROM tombstones WHERE selector = ?", (selector,)
                 )
 
     @staticmethod
@@ -491,6 +619,66 @@ class BrainStore:
         )
 
     @staticmethod
+    def _source_has_tombstone(
+        connection: sqlite3.Connection,
+        provider: str,
+        session_id: str,
+        *,
+        turn_key: str | None = None,
+        prompt_hash: str | None = None,
+        response_hash: str | None = None,
+        event_key: str | None = None,
+    ) -> bool:
+        legacy = [
+            f"source-turn:{provider}:{session_id}:{turn_key}" if turn_key else None,
+            f"source-prompt:{provider}:{session_id}:{prompt_hash}"
+            if prompt_hash
+            else None,
+            f"source-response:{provider}:{session_id}:{response_hash}"
+            if response_hash
+            else None,
+            f"source-handoff:{event_key}" if event_key else None,
+        ]
+        if any(
+            selector and BrainStore._has_tombstone(connection, selector)
+            for selector in legacy
+        ):
+            return True
+        fingerprints = [
+            ("turn_key", turn_key),
+            ("prompt_hash", prompt_hash),
+            ("response_hash", response_hash),
+            ("event_key", event_key),
+        ]
+        matches = [(key, value) for key, value in fingerprints if value]
+        if not matches:
+            return False
+        clauses = " OR ".join(
+            (
+                "CASE WHEN json_valid(receipt_json) "
+                f"THEN json_extract(receipt_json, '$.{key}') END = ?"
+            )
+            for key, _ in matches
+        )
+        params: list[str] = [provider, session_id]
+        params.extend(str(value) for _, value in matches)
+        return (
+            connection.execute(
+                f"""
+                SELECT 1 FROM tombstones
+                WHERE CASE WHEN json_valid(receipt_json)
+                          THEN json_extract(receipt_json, '$.provider') END = ?
+                  AND CASE WHEN json_valid(receipt_json)
+                          THEN json_extract(receipt_json, '$.session_id') END = ?
+                  AND ({clauses})
+                LIMIT 1
+                """,
+                params,
+            ).fetchone()
+            is not None
+        )
+
+    @staticmethod
     def _queue_relation_cleanups(
         connection: sqlite3.Connection,
         rows: list[sqlite3.Row],
@@ -574,20 +762,12 @@ class BrainStore:
                 connection, event.provider, event.session_id
             ):
                 return False, event.turn_id or "forgotten"
-            if self._has_tombstone(
+            if self._source_has_tombstone(
                 connection,
-                (
-                    f"source-prompt:{event.provider}:{event.session_id}:"
-                    f"{prompt_hash}"
-                ),
-            ):
-                return False, event.turn_id or "forgotten"
-            if event.turn_id and self._has_tombstone(
-                connection,
-                (
-                    f"source-turn:{event.provider}:{event.session_id}:"
-                    f"{event.turn_id}"
-                ),
+                event.provider,
+                event.session_id,
+                turn_key=event.turn_id,
+                prompt_hash=prompt_hash,
             ):
                 return False, event.turn_id or "forgotten"
             self._ensure_session(
@@ -595,18 +775,17 @@ class BrainStore:
             )
             turn_key = event.turn_id
             if not turn_key:
-                cutoff = (datetime.now(UTC) - timedelta(seconds=5)).isoformat()
-                recent = connection.execute(
+                pending = connection.execute(
                     """
                     SELECT turn_key FROM turns
                     WHERE provider = ? AND session_id = ? AND prompt_hash = ?
-                      AND response IS NULL AND created_at >= ?
+                      AND response IS NULL
                     ORDER BY id DESC LIMIT 1
                     """,
-                    (event.provider, event.session_id, prompt_hash, cutoff),
+                    (event.provider, event.session_id, prompt_hash),
                 ).fetchone()
-                if recent:
-                    return False, str(recent["turn_key"])
+                if pending:
+                    return False, str(pending["turn_key"])
                 turn_key = f"auto-{uuid.uuid4().hex[:20]}"
 
             event_key = stable_hash(
@@ -673,20 +852,12 @@ class BrainStore:
                 connection, event.provider, event.session_id
             ):
                 return False, None
-            if self._has_tombstone(
+            if self._source_has_tombstone(
                 connection,
-                (
-                    f"source-response:{event.provider}:{event.session_id}:"
-                    f"{response_hash}"
-                ),
-            ):
-                return False, None
-            if event.turn_id and self._has_tombstone(
-                connection,
-                (
-                    f"source-turn:{event.provider}:{event.session_id}:"
-                    f"{event.turn_id}"
-                ),
+                event.provider,
+                event.session_id,
+                turn_key=event.turn_id,
+                response_hash=response_hash,
             ):
                 return False, None
             self._ensure_session(
@@ -881,8 +1052,11 @@ class BrainStore:
                 connection, event.provider, event.session_id
             ):
                 return False, None
-            if self._has_tombstone(
-                connection, f"source-handoff:{event_key}"
+            if self._source_has_tombstone(
+                connection,
+                event.provider,
+                event.session_id,
+                event_key=event_key,
             ):
                 return False, None
             document_id = handoff_document_id(
@@ -992,6 +1166,7 @@ class BrainStore:
                 """,
                 (document_id, event_key),
             )
+            self._compact_completed_handoffs(connection)
 
     def queue_promotion(
         self,
@@ -1083,6 +1258,37 @@ class BrainStore:
         relations: dict[str, list[str]] | None = None,
     ) -> bool:
         with self.transaction() as connection:
+            source_event_key = (
+                str((metadata or {}).get("source_event_key"))
+                if (metadata or {}).get("source_event_key")
+                else None
+            )
+            source_forgotten = bool(
+                provider
+                and session_id
+                and (
+                    (
+                        kind == "session"
+                        and turn_key
+                        and self._source_has_tombstone(
+                            connection,
+                            provider,
+                            session_id,
+                            turn_key=turn_key,
+                        )
+                    )
+                    or (
+                        kind == "handoff"
+                        and source_event_key
+                        and self._source_has_tombstone(
+                            connection,
+                            provider,
+                            session_id,
+                            event_key=source_event_key,
+                        )
+                    )
+                )
+            )
             session_forgotten = bool(
                 session_id
                 and provider
@@ -1093,7 +1299,7 @@ class BrainStore:
             document_forgotten = self._has_tombstone(
                 connection, f"document:{document_id}"
             )
-            if session_forgotten or document_forgotten:
+            if session_forgotten or document_forgotten or source_forgotten:
                 if session_forgotten and session_id and provider:
                     connection.execute(
                         """
@@ -1121,6 +1327,11 @@ class BrainStore:
                         WHERE provider = ? AND session_id = ? AND turn_key = ?
                         """,
                         (provider, session_id, turn_key),
+                    )
+                elif kind == "handoff" and source_event_key:
+                    connection.execute(
+                        "DELETE FROM events WHERE event_key = ?",
+                        (source_event_key,),
                     )
                 return False
             existing_document = connection.execute(
@@ -1511,41 +1722,23 @@ class BrainStore:
                     """,
                     (row["provider"], row["session_id"], row["turn_key"]),
                 ).fetchone()
-                source_receipt = {
-                    "source_document": document_id,
-                    "provider": row["provider"],
-                    "session_id": row["session_id"],
-                    "turn_key": row["turn_key"],
-                }
-                self._insert_tombstone(
-                    connection,
-                    (
-                        f"source-turn:{row['provider']}:{row['session_id']}:"
-                        f"{row['turn_key']}"
-                    ),
-                    reason,
-                    source_receipt,
+                receipt.update(
+                    {
+                        "provider": row["provider"],
+                        "session_id": row["session_id"],
+                        "turn_key": row["turn_key"],
+                        "prompt_hash": (
+                            str(turn["prompt_hash"])
+                            if turn and turn["prompt_hash"]
+                            else None
+                        ),
+                        "response_hash": (
+                            stable_hash(str(turn["response"]))
+                            if turn and turn["response"]
+                            else None
+                        ),
+                    }
                 )
-                if turn and turn["prompt_hash"]:
-                    self._insert_tombstone(
-                        connection,
-                        (
-                            f"source-prompt:{row['provider']}:{row['session_id']}:"
-                            f"{turn['prompt_hash']}"
-                        ),
-                        reason,
-                        source_receipt,
-                    )
-                if turn and turn["response"]:
-                    self._insert_tombstone(
-                        connection,
-                        (
-                            f"source-response:{row['provider']}:{row['session_id']}:"
-                            f"{stable_hash(str(turn['response']))}"
-                        ),
-                        reason,
-                        source_receipt,
-                    )
                 connection.execute(
                     """
                     DELETE FROM events
@@ -1588,18 +1781,22 @@ class BrainStore:
                     )
                     == document_id
                 ]
-                for outbox in outbox_rows:
-                    event_key = str(outbox["event_key"])
-                    self._insert_tombstone(
-                        connection,
-                        f"source-handoff:{event_key}",
-                        reason,
+                event_keys = {str(outbox["event_key"]) for outbox in outbox_rows}
+                try:
+                    metadata = json.loads(str(row["metadata_json"]))
+                except (TypeError, json.JSONDecodeError):
+                    metadata = {}
+                if isinstance(metadata, dict) and metadata.get("source_event_key"):
+                    event_keys.add(str(metadata["source_event_key"]))
+                if event_keys:
+                    receipt.update(
                         {
-                            "source_document": document_id,
                             "provider": row["provider"],
                             "session_id": row["session_id"],
-                        },
+                            "event_key": sorted(event_keys)[0],
+                        }
                     )
+                for event_key in event_keys:
                     connection.execute(
                         "DELETE FROM events WHERE event_key = ?",
                         (event_key,),
@@ -1729,6 +1926,17 @@ class BrainStore:
             }
             connection.execute(
                 """
+                DELETE FROM tombstones
+                WHERE selector <> ?
+                  AND CASE WHEN json_valid(receipt_json)
+                           THEN json_extract(receipt_json, '$.provider') END = ?
+                  AND CASE WHEN json_valid(receipt_json)
+                           THEN json_extract(receipt_json, '$.session_id') END = ?
+                """,
+                (selector, provider, session_id),
+            )
+            connection.execute(
+                """
                 INSERT INTO tombstones(
                     tombstone_id, selector, reason, created_at, receipt_json
                 ) VALUES (?, ?, ?, ?, ?)
@@ -1745,6 +1953,98 @@ class BrainStore:
             )
             self._mark_dirty(connection)
             return receipt
+
+    @staticmethod
+    def _compact_empty_sessions(
+        connection: sqlite3.Connection, reason: str
+    ) -> int:
+        compacted = 0
+        rows = connection.execute(
+            """
+            WITH candidates(provider, session_id) AS (
+                SELECT provider, session_id FROM sessions
+                UNION
+                SELECT
+                    CASE WHEN json_valid(receipt_json)
+                        THEN json_extract(receipt_json, '$.provider') END,
+                    CASE WHEN json_valid(receipt_json)
+                        THEN json_extract(receipt_json, '$.session_id') END
+                FROM tombstones
+            )
+            SELECT provider, session_id FROM candidates AS session
+            WHERE provider IS NOT NULL
+              AND session_id IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM turns
+                WHERE turns.provider = session.provider
+                  AND turns.session_id = session.session_id
+            )
+              AND NOT EXISTS (
+                SELECT 1 FROM events
+                WHERE events.provider = session.provider
+                  AND events.session_id = session.session_id
+            )
+              AND NOT EXISTS (
+                SELECT 1 FROM documents
+                WHERE documents.provider = session.provider
+                  AND documents.session_id = session.session_id
+            )
+              AND NOT EXISTS (
+                SELECT 1 FROM handoff_outbox
+                WHERE handoff_outbox.provider = session.provider
+                  AND handoff_outbox.session_id = session.session_id
+            )
+              AND NOT EXISTS (
+                SELECT 1 FROM promotion_outbox
+                WHERE promotion_outbox.provider = session.provider
+                  AND promotion_outbox.session_id = session.session_id
+            )
+            """
+        ).fetchall()
+        for row in rows:
+            provider = str(row["provider"])
+            session_id = str(row["session_id"])
+            selector = f"session:{provider}:{session_id}"
+            already_compacted = BrainStore._has_tombstone(connection, selector)
+            connection.execute(
+                """
+                DELETE FROM tombstones
+                WHERE selector <> ?
+                  AND CASE WHEN json_valid(receipt_json)
+                           THEN json_extract(receipt_json, '$.provider') END = ?
+                  AND CASE WHEN json_valid(receipt_json)
+                           THEN json_extract(receipt_json, '$.session_id') END = ?
+                """,
+                (selector, provider, session_id),
+            )
+            connection.execute(
+                "DELETE FROM sessions WHERE provider = ? AND session_id = ?",
+                (provider, session_id),
+            )
+            if already_compacted:
+                continue
+            BrainStore._insert_tombstone(
+                connection,
+                selector,
+                reason,
+                {
+                    "selector": selector,
+                    "provider": provider,
+                    "session_id": session_id,
+                    "found": True,
+                    "paths": [],
+                    "retention_compacted": True,
+                    "deleted_at": utc_now(),
+                },
+            )
+            compacted += 1
+        if compacted:
+            BrainStore._mark_dirty(connection)
+        return compacted
+
+    def compact_empty_sessions(self, reason: str = "retention") -> int:
+        with self.transaction() as connection:
+            return self._compact_empty_sessions(connection, reason)
 
     def counts(self) -> dict[str, int]:
         with self.connect() as connection:
@@ -1826,17 +2126,23 @@ class BrainStore:
                 connection.execute(
                     """
                     SELECT documents.* FROM documents
-                    WHERE documents.kind = ? AND documents.created_at < ?
-                      AND (
-                          documents.kind != 'session'
-                          OR NOT EXISTS (
-                              SELECT 1 FROM promotion_outbox
-                              WHERE promotion_outbox.provider = documents.provider
-                                AND promotion_outbox.session_id = documents.session_id
-                                AND promotion_outbox.turn_key = documents.turn_key
-                          )
-                      )
-                    ORDER BY documents.created_at ASC LIMIT ?
+                    WHERE documents.kind = ?
+                      AND COALESCE(
+                          CASE WHEN json_valid(documents.metadata_json)
+                              THEN json_extract(
+                                  documents.metadata_json, '$.captured_at'
+                              )
+                          END,
+                          documents.created_at
+                      ) < ?
+                    ORDER BY COALESCE(
+                        CASE WHEN json_valid(documents.metadata_json)
+                            THEN json_extract(
+                                documents.metadata_json, '$.captured_at'
+                            )
+                        END,
+                        documents.created_at
+                    ) ASC LIMIT ?
                     """,
                     (kind, before, limit),
                 ).fetchall()
@@ -1848,13 +2154,8 @@ class BrainStore:
                 connection.execute(
                     """
                     SELECT COUNT(*) FROM turns
-                    WHERE document_id IS NULL AND created_at < ?
-                      AND NOT EXISTS (
-                          SELECT 1 FROM promotion_outbox
-                          WHERE promotion_outbox.provider = turns.provider
-                            AND promotion_outbox.session_id = turns.session_id
-                            AND promotion_outbox.turn_key = turns.turn_key
-                      )
+                    WHERE document_id IS NULL
+                      AND COALESCE(completed_at, created_at) < ?
                     """,
                     (before,),
                 ).fetchone()[0]
@@ -1908,13 +2209,8 @@ class BrainStore:
             turns = connection.execute(
                 """
                 SELECT * FROM turns
-                WHERE document_id IS NULL AND created_at < ?
-                  AND NOT EXISTS (
-                      SELECT 1 FROM promotion_outbox
-                      WHERE promotion_outbox.provider = turns.provider
-                        AND promotion_outbox.session_id = turns.session_id
-                        AND promotion_outbox.turn_key = turns.turn_key
-                  )
+                WHERE document_id IS NULL
+                  AND COALESCE(completed_at, created_at) < ?
                 """,
                 (before,),
             ).fetchall()
@@ -1923,6 +2219,12 @@ class BrainStore:
                     "provider": turn["provider"],
                     "session_id": turn["session_id"],
                     "turn_key": turn["turn_key"],
+                    "prompt_hash": turn["prompt_hash"],
+                    "response_hash": (
+                        stable_hash(str(turn["response"]))
+                        if turn["response"]
+                        else None
+                    ),
                     "retained_content": False,
                 }
                 self._insert_tombstone(
@@ -1934,26 +2236,6 @@ class BrainStore:
                     reason,
                     receipt,
                 )
-                if turn["prompt_hash"]:
-                    self._insert_tombstone(
-                        connection,
-                        (
-                            f"source-prompt:{turn['provider']}:{turn['session_id']}:"
-                            f"{turn['prompt_hash']}"
-                        ),
-                        reason,
-                        receipt,
-                    )
-                if turn["response"]:
-                    self._insert_tombstone(
-                        connection,
-                        (
-                            f"source-response:{turn['provider']}:{turn['session_id']}:"
-                            f"{stable_hash(str(turn['response']))}"
-                        ),
-                        reason,
-                        receipt,
-                    )
                 connection.execute(
                     """
                     DELETE FROM events
@@ -1982,6 +2264,7 @@ class BrainStore:
                     {
                         "provider": handoff["provider"],
                         "session_id": handoff["session_id"],
+                        "event_key": handoff["event_key"],
                         "retained_content": False,
                     },
                 )
@@ -2026,25 +2309,5 @@ class BrainStore:
                     (event["event_key"],),
                 )
                 deleted["orphan_events"] += 1
-
-            connection.execute(
-                """
-                DELETE FROM sessions
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM turns
-                    WHERE turns.provider = sessions.provider
-                      AND turns.session_id = sessions.session_id
-                )
-                  AND NOT EXISTS (
-                    SELECT 1 FROM events
-                    WHERE events.provider = sessions.provider
-                      AND events.session_id = sessions.session_id
-                )
-                  AND NOT EXISTS (
-                    SELECT 1 FROM documents
-                    WHERE documents.provider = sessions.provider
-                      AND documents.session_id = sessions.session_id
-                )
-                """
-            )
+            self._compact_empty_sessions(connection, reason)
         return deleted

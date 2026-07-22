@@ -6,6 +6,17 @@ The project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-07-22
+
+### Fixed
+
+- Include native Grok skills in `brainctl status` and let `brainctl hooks status`
+  default to Claude-compatible clients while supporting explicit
+  `--clients grok` inspection.
+- Vendor Cython and PyYAML in the Homebrew formula, declare `libyaml`, and make
+  bottle CI reject unrelated dependency artifacts while testing Intel macOS
+  source installs explicitly.
+
 ## [0.1.4] - 2026-07-22
 
 ### Added

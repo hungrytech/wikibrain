@@ -317,7 +317,7 @@ Do not bypass Codex hook trust.
 ```powershell
 $installer = Join-Path $env:TEMP "install-wikibrain.ps1"
 Invoke-WebRequest `
-  "https://raw.githubusercontent.com/hungrytech/wikibrain/v0.1.4/scripts/install-windows.ps1" `
+  "https://raw.githubusercontent.com/hungrytech/wikibrain/v0.1.5/scripts/install-windows.ps1" `
   -OutFile $installer
 Get-Content $installer
 powershell.exe -NoProfile -ExecutionPolicy Bypass `

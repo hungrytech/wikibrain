@@ -31,7 +31,11 @@ from .wikimap_adapter import WikimapAdapter, WikimapError
 
 
 def _clients(value: str) -> list[str]:
-    parsed = [item.strip().lower() for item in value.split(",") if item.strip()]
+    parsed = list(
+        dict.fromkeys(item.strip().lower() for item in value.split(",") if item.strip())
+    )
+    if not parsed:
+        raise argparse.ArgumentTypeError("at least one client is required")
     invalid = sorted(set(parsed) - {"claude", "codex", "grok"})
     if invalid:
         raise argparse.ArgumentTypeError(

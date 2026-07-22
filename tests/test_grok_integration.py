@@ -5,7 +5,7 @@ import io
 import json
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -249,8 +249,9 @@ class GrokIntegrationTests(unittest.TestCase):
                 item["client"]: item
                 for item in json.loads(output.getvalue())["skills"]
             }
-            self.assertIn("grok", skills)
+            self.assertEqual(set(skills), {"claude", "agents", "grok"})
             self.assertTrue(skills["grok"]["installed"])
+            self.assertTrue(skills["grok"]["managed"])
 
     def test_hooks_status_respects_selected_clients(self) -> None:
         parser = build_parser()
@@ -279,6 +280,24 @@ class GrokIntegrationTests(unittest.TestCase):
                         item["client"] for item in json.loads(output.getvalue())
                     }
                     self.assertEqual(clients, expected)
+
+    def test_clients_are_deduplicated_in_input_order(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(
+            ["hooks", "status", "--clients", "grok,claude,grok"]
+        )
+
+        self.assertEqual(args.clients, ["grok", "claude"])
+
+    def test_hooks_status_rejects_an_empty_client_list(self) -> None:
+        parser = build_parser()
+        for value in ("", ","):
+            with self.subTest(value=value):
+                with redirect_stderr(io.StringIO()), self.assertRaises(
+                    SystemExit
+                ) as raised:
+                    parser.parse_args(["hooks", "status", "--clients", value])
+                self.assertEqual(raised.exception.code, 2)
 
     def test_cli_accepts_grok_client_and_provider(self) -> None:
         parser = build_parser()

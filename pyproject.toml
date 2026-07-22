@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wikibrain-agent"
-version = "0.1.5"
+version = "0.1.6"
 description = "Local-first personal memory bridge for Claude Code, Codex, Grok Build, and Wikimap"
 readme = "README.md"
 requires-python = ">=3.11"

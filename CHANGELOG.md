@@ -6,6 +6,14 @@ The project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-07-22
+
+### Fixed
+
+- Reject empty `--clients` values instead of silently returning or applying an
+  empty client set.
+- Deduplicate comma-separated clients while preserving their input order.
+
 ## [0.1.5] - 2026-07-22
 
 ### Fixed

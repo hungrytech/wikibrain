@@ -15,8 +15,8 @@ pinned backend.
    ```bash
      python3 scripts/render_homebrew_formula.py \
        --owner hungrytech \
-       --version 0.1.5 \
-       --source-url https://github.com/hungrytech/wikibrain/archive/refs/tags/v0.1.5.tar.gz \
+       --version 0.1.6 \
+       --source-url https://github.com/hungrytech/wikibrain/archive/refs/tags/v0.1.6.tar.gz \
        --source-sha256 64_HEX_CHARACTERS
    ```
 

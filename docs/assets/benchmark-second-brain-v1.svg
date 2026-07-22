@@ -48,6 +48,6 @@
 <rect x="632" y="310" width="150" height="24" rx="8" fill="#a78bfa"/>
 <text x="856" y="330" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="700" fill="#f8fafc" text-anchor="end">100.00%</text>
 <line x1="40" y1="386" x2="880" y2="386" stroke="#25364a"/>
-<text x="40" y="411" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" fill="#8fa3b8" text-anchor="start">macOS 26.5.2 · arm64 · Python 3.13.11 · wikimap 1.1.0</text>
+<text x="40" y="411" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" fill="#8fa3b8" text-anchor="start">macOS 26.5.2-arm64-arm-64bit · Python 3.11.15 · wikimap 1.1.0</text>
 <text x="864" y="411" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" fill="#8fa3b8" text-anchor="end">Higher is better</text>
 </svg>

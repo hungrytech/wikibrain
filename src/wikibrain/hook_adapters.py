@@ -8,13 +8,20 @@ from .models import NormalizedEvent
 from .redaction import sanitize_value
 
 
-SUPPORTED_PROVIDERS = {"claude", "codex"}
+SUPPORTED_PROVIDERS = {"claude", "codex", "grok"}
 SUPPORTED_EVENTS = {
     "SessionStart",
     "UserPromptSubmit",
     "PostToolUse",
     "Stop",
     "PostCompact",
+}
+EVENT_NAME_ALIASES = {
+    "session_start": "SessionStart",
+    "user_prompt_submit": "UserPromptSubmit",
+    "post_tool_use": "PostToolUse",
+    "stop": "Stop",
+    "post_compact": "PostCompact",
 }
 
 
@@ -24,27 +31,37 @@ def _string(value: Any) -> str | None:
     return None
 
 
+def _value(payload: dict[str, Any], snake_case: str, camel_case: str) -> Any:
+    if snake_case in payload:
+        return payload[snake_case]
+    return payload.get(camel_case)
+
+
 def _fallback_session(provider: str, payload: dict[str, Any], cwd: str) -> str:
-    source = _string(payload.get("transcript_path")) or cwd
+    source = _string(_value(payload, "transcript_path", "transcriptPath")) or cwd
     digest = hashlib.sha256(f"{provider}\0{source}".encode()).hexdigest()[:20]
     return f"unknown-{digest}"
 
 
 def _tool_pointer(payload: dict[str, Any], max_chars: int) -> dict[str, Any]:
-    raw_input = payload.get("tool_input")
+    raw_input = _value(payload, "tool_input", "toolInput")
     if not isinstance(raw_input, dict):
         raw_input = payload.get("input")
     if not isinstance(raw_input, dict):
         raw_input = {}
     selected: dict[str, Any] = {}
-    allowed = (
-        "file_path",
-        "path",
-        "workdir",
-    )
-    for key in allowed:
-        if key in raw_input:
-            selected[key] = sanitize_value(raw_input[key], min(max_chars, 1_000))
+    allowed = {
+        "file_path": ("file_path", "filePath"),
+        "path": ("path",),
+        "workdir": ("workdir", "workingDirectory"),
+    }
+    for canonical, aliases in allowed.items():
+        for key in aliases:
+            if key in raw_input:
+                selected[canonical] = sanitize_value(
+                    raw_input[key], min(max_chars, 1_000)
+                )
+                break
     return selected
 
 
@@ -57,37 +74,46 @@ def normalize_hook(
     provider = provider.lower()
     if provider not in SUPPORTED_PROVIDERS:
         raise ValueError(f"unsupported provider: {provider}")
-    event_name = _string(payload.get("hook_event_name"))
+    event_name = _string(_value(payload, "hook_event_name", "hookEventName"))
+    event_name = EVENT_NAME_ALIASES.get(event_name or "", event_name)
     if event_name not in SUPPORTED_EVENTS:
         raise ValueError(f"unsupported hook event: {event_name!r}")
     cwd = _string(payload.get("cwd")) or str(Path.cwd())
-    supplied_session_id = _string(payload.get("session_id"))
+    supplied_session_id = _string(_value(payload, "session_id", "sessionId"))
     session_id = supplied_session_id or _fallback_session(provider, payload, cwd)
-    turn_id = _string(payload.get("turn_id"))
+    turn_id = _string(_value(payload, "turn_id", "turnId")) or _string(
+        _value(payload, "prompt_id", "promptId")
+    )
     prompt = _string(payload.get("prompt"))
-    assistant = _string(payload.get("last_assistant_message"))
-    compact_summary = _string(payload.get("compact_summary"))
-    background_tasks = payload.get("background_tasks")
+    assistant = _string(
+        _value(payload, "last_assistant_message", "lastAssistantMessage")
+    )
+    compact_summary = _string(_value(payload, "compact_summary", "compactSummary"))
+    background_tasks = _value(payload, "background_tasks", "backgroundTasks")
     background_work_pending = bool(
         provider == "claude"
         and isinstance(background_tasks, list)
         and background_tasks
     )
-    tool_name = _string(payload.get("tool_name"))
-    tool_use_id = _string(payload.get("tool_use_id"))
-    metadata_keys = (
-        "source",
-        "trigger",
-        "model",
-        "permission_mode",
-        "transcript_path",
-        "stop_hook_active",
-    )
-    metadata = {
-        key: sanitize_value(payload[key], min(max_chars, 2_000))
-        for key in metadata_keys
-        if key in payload
+    tool_name = _string(_value(payload, "tool_name", "toolName"))
+    tool_use_id = _string(_value(payload, "tool_use_id", "toolUseId"))
+    metadata_aliases = {
+        "source": ("source", "source"),
+        "trigger": ("trigger", "trigger"),
+        "model": ("model", "model"),
+        "permission_mode": ("permission_mode", "permissionMode"),
+        "transcript_path": ("transcript_path", "transcriptPath"),
+        "stop_hook_active": ("stop_hook_active", "stopHookActive"),
+        "workspace_root": ("workspace_root", "workspaceRoot"),
+        "prompt_id": ("prompt_id", "promptId"),
+        "timestamp": ("timestamp", "timestamp"),
+        "reason": ("reason", "reason"),
     }
+    metadata = {}
+    for canonical, (snake_case, camel_case) in metadata_aliases.items():
+        value = _value(payload, snake_case, camel_case)
+        if value is not None:
+            metadata[canonical] = sanitize_value(value, min(max_chars, 2_000))
     return NormalizedEvent(
         provider=provider,
         name=event_name,

@@ -8,15 +8,15 @@ pinned backend.
 
 ## Release workflow
 
-1. Publish `hungrytech/wikibrain` and tag the release, for example `v0.1.3`.
+1. Publish `hungrytech/wikibrain` and tag the release, for example `v0.1.4`.
 2. Download the GitHub-generated source archive and calculate its SHA-256.
 3. Render the Formula:
 
    ```bash
      python3 scripts/render_homebrew_formula.py \
        --owner hungrytech \
-       --version 0.1.3 \
-       --source-url https://github.com/hungrytech/wikibrain/archive/refs/tags/v0.1.3.tar.gz \
+       --version 0.1.4 \
+       --source-url https://github.com/hungrytech/wikibrain/archive/refs/tags/v0.1.4.tar.gz \
        --source-sha256 64_HEX_CHARACTERS
    ```
 

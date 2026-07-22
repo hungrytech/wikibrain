@@ -35,6 +35,10 @@ def default_skill_targets(clients: list[str]) -> dict[str, Path]:
         targets["claude"] = Path.home() / ".claude" / "skills" / "wikibrain"
     if "codex" in clients:
         targets["agents"] = Path.home() / ".agents" / "skills" / "wikibrain"
+    if "grok" in clients:
+        grok_home = os.environ.get("GROK_HOME")
+        root = Path(grok_home).expanduser() if grok_home else Path.home() / ".grok"
+        targets["grok"] = root / "skills" / "wikibrain"
     return targets
 
 

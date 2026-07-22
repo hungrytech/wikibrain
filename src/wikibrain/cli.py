@@ -32,7 +32,7 @@ from .wikimap_adapter import WikimapAdapter, WikimapError
 
 def _clients(value: str) -> list[str]:
     parsed = [item.strip().lower() for item in value.split(",") if item.strip()]
-    invalid = sorted(set(parsed) - {"claude", "codex"})
+    invalid = sorted(set(parsed) - {"claude", "codex", "grok"})
     if invalid:
         raise argparse.ArgumentTypeError(
             f"unknown client(s): {', '.join(invalid)}"
@@ -72,6 +72,8 @@ def _path_overrides(args: argparse.Namespace) -> dict[str, Path]:
         paths["claude"] = Path(args.claude_settings).expanduser()
     if getattr(args, "codex_hooks", None):
         paths["codex"] = Path(args.codex_hooks).expanduser()
+    if getattr(args, "grok_hooks", None):
+        paths["grok"] = Path(args.grok_hooks).expanduser()
     return paths
 
 
@@ -81,6 +83,8 @@ def _skill_targets(args: argparse.Namespace, clients: list[str]) -> dict[str, Pa
         targets["claude"] = Path(args.claude_skill_dir).expanduser()
     if getattr(args, "agents_skill_dir", None) and "codex" in clients:
         targets["agents"] = Path(args.agents_skill_dir).expanduser()
+    if getattr(args, "grok_skill_dir", None) and "grok" in clients:
+        targets["grok"] = Path(args.grok_skill_dir).expanduser()
     return targets
 
 
@@ -101,6 +105,12 @@ def _client_readiness(
             readiness["codex_trust_owner"] = (
                 "Codex; brainctl does not grant, bypass, or inspect hook trust"
             )
+        if "grok" in clients:
+            readiness["grok_manual_skill"] = "preview-only"
+            readiness["grok_automatic_capture"] = "preview-only"
+            readiness["grok_automatic_recall"] = (
+                "unsupported-by-passive-hook-stdout-contract"
+            )
         return readiness
 
     readiness = {"manual_commands": "ready"}
@@ -119,6 +129,16 @@ def _client_readiness(
         )
         readiness["codex_trust_owner"] = (
             "Codex; brainctl does not grant, bypass, or inspect hook trust"
+        )
+    if "grok" in clients:
+        readiness["grok_manual_skill"] = (
+            "installed-for-new-session" if skills_installed else "not-installed"
+        )
+        readiness["grok_automatic_capture"] = (
+            "ready-after-new-session" if hooks_installed else "not-installed"
+        )
+        readiness["grok_automatic_recall"] = (
+            "manual-skill-required-passive-hook-stdout-is-ignored"
         )
     return readiness
 
@@ -148,6 +168,11 @@ def _next_step(
             "Codex manual commands are ready now and its installed skill loads "
             "in the new session; for automatic hooks, open /hooks and "
             "review/trust the current definitions."
+        )
+    if "grok" in clients:
+        steps.append(
+            "Grok capture hooks and skill are ready; Grok ignores passive-hook "
+            "stdout, so use the WikiBrain skill or brainctl recall for recalled context."
         )
     return " ".join(steps)
 
@@ -780,7 +805,7 @@ def command_retention(args: argparse.Namespace, home: Path) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="brainctl",
-        description="Local-first personal memory bridge for Claude Code and Codex.",
+        description="Local-first project memory bridge for Claude Code, Codex, and Grok.",
     )
     parser.add_argument("--home", help="Override WIKIBRAIN_HOME")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -803,8 +828,10 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--command", help="brainctl executable to write into hook configs")
     init.add_argument("--claude-settings")
     init.add_argument("--codex-hooks")
+    init.add_argument("--grok-hooks")
     init.add_argument("--claude-skill-dir")
     init.add_argument("--agents-skill-dir")
+    init.add_argument("--grok-skill-dir")
     init.add_argument("--dry-run", action="store_true")
     init.add_argument("--force", action="store_true")
     init.add_argument("--json", action="store_true")
@@ -814,25 +841,31 @@ def build_parser() -> argparse.ArgumentParser:
     setup.add_argument("--command")
     setup.add_argument("--claude-settings")
     setup.add_argument("--codex-hooks")
+    setup.add_argument("--grok-hooks")
     setup.add_argument("--claude-skill-dir")
     setup.add_argument("--agents-skill-dir")
+    setup.add_argument("--grok-skill-dir")
     setup.add_argument("--no-skills", action="store_true")
     setup.add_argument("--dry-run", action="store_true")
     setup.add_argument("--json", action="store_true")
 
     hook = commands.add_parser("hook", help=argparse.SUPPRESS)
-    hook.add_argument("--provider", choices=["claude", "codex"], required=True)
+    hook.add_argument(
+        "--provider", choices=["claude", "codex", "grok"], required=True
+    )
 
     hooks = commands.add_parser("hooks", help="Inspect or uninstall hooks")
     hooks_commands = hooks.add_subparsers(dest="hooks_command", required=True)
     hooks_status = hooks_commands.add_parser("status")
     hooks_status.add_argument("--claude-settings")
     hooks_status.add_argument("--codex-hooks")
+    hooks_status.add_argument("--grok-hooks")
     hooks_status.add_argument("--json", action="store_true")
     hooks_remove = hooks_commands.add_parser("uninstall")
     hooks_remove.add_argument("--clients", type=_clients, default=["claude", "codex"])
     hooks_remove.add_argument("--claude-settings")
     hooks_remove.add_argument("--codex-hooks")
+    hooks_remove.add_argument("--grok-hooks")
     hooks_remove.add_argument("--dry-run", action="store_true")
     hooks_remove.add_argument("--json", action="store_true")
 
@@ -844,6 +877,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     skills_status_parser.add_argument("--claude-skill-dir")
     skills_status_parser.add_argument("--agents-skill-dir")
+    skills_status_parser.add_argument("--grok-skill-dir")
     skills_status_parser.add_argument("--json", action="store_true")
     skills_remove = skills_commands.add_parser("uninstall")
     skills_remove.add_argument(
@@ -851,6 +885,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     skills_remove.add_argument("--claude-skill-dir")
     skills_remove.add_argument("--agents-skill-dir")
+    skills_remove.add_argument("--grok-skill-dir")
     skills_remove.add_argument("--dry-run", action="store_true")
     skills_remove.add_argument("--json", action="store_true")
 
@@ -912,7 +947,7 @@ def build_parser() -> argparse.ArgumentParser:
     selector.add_argument("--session")
     forget.add_argument(
         "--provider",
-        choices=["claude", "codex"],
+        choices=["claude", "codex", "grok"],
         help="Disambiguate --session when clients reuse the same session ID",
     )
     forget.add_argument("--reason", default="user-request")

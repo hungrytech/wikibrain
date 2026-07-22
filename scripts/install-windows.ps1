@@ -2,7 +2,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$Version = "0.1.3",
+    [string]$Version = "0.1.4",
     [string]$PackageSource = "",
     [switch]$Initialize,
     [switch]$SkipPythonInstall

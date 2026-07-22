@@ -6,8 +6,19 @@ The project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-07-22
+
 ### Added
 
+- Official Grok Build CLI support with native lifecycle-hook installation,
+  provider/session/workspace provenance, a Grok skill target, and explicit
+  `brainctl recall` and `brainctl remember` workflows.
+- Runtime-verified Grok payload normalization for lowercase event values such as
+  `user_prompt_submit` and `stop`, including `promptId`, `transcriptPath`,
+  timestamp, and termination-reason provenance.
+- English, Korean, Japanese, and Simplified Chinese Grok setup documentation,
+  including the official executable installer, native and Claude-compatible
+  hook paths, duplicate-hook avoidance, and passive-stdout limitations.
 - Adaptive long-term memory promotion for session and handoff evidence actually
   injected across three distinct consumer provider/session pairs, three UTC
   days, and two provider/session/day uses within a rolling 60-day window.
@@ -32,6 +43,11 @@ The project follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Grok passive hooks now skip automatic recall computation and injection-usage
+  accounting because Grok ignores passive stdout. This prevents undelivered
+  evidence from contributing to adaptive-memory promotion. Grok `Stop` archives
+  an explicit unavailable-response placeholder rather than reading the external
+  transcript without a bounded redaction contract.
 - Retention now uses conversation capture/completion time rather than Markdown
   registration time and no longer lets stale promotion work protect expired
   turns indefinitely.

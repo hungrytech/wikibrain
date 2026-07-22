@@ -4,8 +4,8 @@ WikiBrain is deliberately a bridge, not a fourth knowledge database.
 
 ```text
 Claude Code hooks ─┐
-                   ├─ brainctl ─ SQLite WAL (events and evidence)
-Codex hooks ───────┘       │
+Codex hooks ───────┼─ brainctl ─ SQLite WAL (events and evidence)
+Grok hooks ────────┘       │
                            ├─ owned Markdown vault (durable truth)
                            └─ wikimap CLI (disposable index and recall)
 ```
@@ -26,13 +26,37 @@ Codex hooks ───────┘       │
 
 ## Capture and recall
 
-1. `UserPromptSubmit` redacts and stores a prompt.
+1. `UserPromptSubmit` redacts and stores a prompt from Claude, Codex, or Grok.
 2. `Stop` pairs `last_assistant_message` with that prompt, writes an immutable
    Markdown handoff atomically, then updates Wikimap.
-3. `SessionStart` loads recent handoffs for the same workspace.
-4. `UserPromptSubmit` also searches Wikimap with the current prompt.
+3. On Claude and Codex, `SessionStart` loads recent handoffs for the same workspace.
+4. On Claude and Codex, `UserPromptSubmit` also searches Wikimap with the current
+   prompt.
 5. Claude and Codex encode context with the same
    `hookSpecificOutput.additionalContext` contract.
+
+[Grok Build hooks](https://docs.x.ai/build/features/hooks) provide the five
+events WikiBrain consumes and can discover Claude Code hooks and skills. Grok
+sets `GROK_HOOK_EVENT` and `GROK_SESSION_ID`; WikiBrain uses these variables to
+attribute Claude-compatible hook invocations to provider `grok`. Native Grok
+hooks can instead be installed under `${GROK_HOME:-~/.grok}/hooks/` for a
+Grok-only setup. The two discovery paths should not be enabled together because
+Grok can execute both definitions for one event.
+
+Grok's passive events ignore hook stdout. WikiBrain therefore captures and
+archives Grok events, but deliberately skips hook-time recall and context-usage
+accounting for Grok. This prevents evidence that Grok never received from being
+counted toward adaptive-memory promotion. Grok recall remains explicit through
+the installed skill or `brainctl recall` until the host exposes a supported
+context-injection result.
+
+The observed Grok binary sends lowercase event values such as
+`user_prompt_submit` and `stop`; the adapter maps these to canonical names and
+uses `promptId` as the turn identifier. `UserPromptSubmit` includes `prompt`.
+The observed `Stop` payload includes `transcriptPath` and `reason` but no
+assistant body. WikiBrain records the lifecycle turn with an explicit
+unavailable placeholder and deliberately does not parse the external transcript
+without a separate bounded, redacted transcript contract.
 
 Workspace identity is the nearest Git root inside an allowlisted root. This
 keeps two repositories isolated even when the allowlist is the user's home
@@ -64,8 +88,8 @@ dirty, recall searches live Markdown instead of trusting stale index results.
 An index generation counter prevents an update that raced with a newer write
 from clearing that dirty state. Source-specific deletion tombstones reject late
 prompt, response, and compaction retries, so an erased page cannot silently
-recreate itself. Session tombstones are keyed by provider plus session ID, so a
-Claude deletion cannot erase an unrelated Codex session with the same ID.
+recreate itself. Session tombstones are keyed by provider plus session ID, so a Claude deletion
+cannot erase an unrelated Codex or Grok session with the same ID.
 
 ## Memory quality
 

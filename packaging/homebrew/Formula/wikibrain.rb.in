@@ -1,7 +1,7 @@
 class Wikibrain < Formula
   include Language::Python::Virtualenv
 
-  desc "Local-first personal memory bridge for Claude Code and Codex"
+  desc "Local-first memory bridge for Claude Code, Codex, and Grok Build"
   homepage "https://github.com/@OWNER@/wikibrain"
   url "@SOURCE_URL@"
   sha256 "@SOURCE_SHA256@"
@@ -42,6 +42,10 @@ class Wikibrain < Formula
       Codex manual recall and remember commands work immediately. Automatic
       Codex capture and recall require a new session plus /hooks review of the
       current definition hash. brainctl does not inspect or bypass that trust.
+
+      Grok Build captures lifecycle evidence automatically. Recall is explicit
+      through the WikiBrain skill or brainctl recall because passive Grok hook
+      stdout is not injected into model context.
 
       After a future brew upgrade, refresh the managed shim and skills with:
 

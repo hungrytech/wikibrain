@@ -13,8 +13,8 @@
   <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-WikiBrain is an [MIT-licensed](LICENSE) shared second brain for Claude Code and
-Codex. It captures redacted conversation handoffs through lifecycle hooks,
+WikiBrain is an [MIT-licensed](LICENSE) shared second brain for Claude Code,
+Codex, and Grok Build. It captures redacted conversation handoffs through lifecycle hooks,
 stores durable context as readable Markdown, and uses
 [Wikimap](https://github.com/dhha22/wikimap) for local, source-aware recall.
 
@@ -36,7 +36,7 @@ stores durable context as readable Markdown, and uses
 
 | Need | What WikiBrain provides |
 | --- | --- |
-| Continue across agents | Claude and Codex can recover the same project-scoped context. |
+| Continue across agents | Claude, Codex, and Grok can recover the same project-scoped context. |
 | Separate evidence from memory | 90-day evidence, adaptive memory, and explicit long-term memory remain distinguishable. |
 | Preserve user ownership | Markdown is the durable source; the Wikimap index is disposable. |
 | Recover from transient failures | Archive, promotion, and relation-cleanup outboxes retry interrupted work. |
@@ -72,6 +72,8 @@ change Claude or Codex settings.
 | Claude Code automatic memory | Ready in a new session | None; `/hooks` is available for inspection. |
 | Codex manual memory | Ready immediately | Use `brainctl remember` and `brainctl recall`. |
 | Codex automatic capture and recall | Definitions are installed but initially untrusted | Start a new session, open `/hooks`, inspect the five WikiBrain hooks, and trust their current hash. |
+| Grok automatic capture | Ready through Grok's Claude-hook compatibility; native setup is also available | None for the default setup. Use `brainctl setup --clients grok` only for a Grok-only installation. |
+| Grok recall | The installed skill and `brainctl recall` are available | Passive-hook stdout is ignored by Grok, so hook-based automatic context injection is not supported. |
 
 ### 3. Run a smoke test
 
@@ -94,8 +96,8 @@ brainctl forget --document DOCUMENT_ID --apply
 
 ```text
 Claude Code hooks ─┐
-                   ├─ brainctl ─┬─ SQLite WAL: receipts, queues, relations
-Codex hooks ───────┘            ├─ Markdown vault: durable readable truth
+Codex hooks ───────┼─ brainctl ─┬─ SQLite WAL: receipts, queues, relations
+Grok hooks ────────┘            ├─ Markdown vault: durable readable truth
                                 └─ Wikimap: disposable local search index
 ```
 
@@ -110,6 +112,28 @@ Codex hooks ───────┘            ├─ Markdown vault: durable r
    workspace.
 5. Typed `relates-to` and `supersedes` links connect evidence and suppress stale
    guidance without deleting its provenance.
+
+[Grok Build](https://docs.x.ai/build/features/hooks) officially supports `SessionStart`, `UserPromptSubmit`,
+`PostToolUse`, `Stop`, and `PostCompact`, and automatically reads Claude Code
+hooks and skills. WikiBrain detects Grok's hook environment so compatible
+Claude hook calls are attributed to provider `grok`. Grok's passive-hook
+contract ignores stdout, however, so WikiBrain captures Grok evidence
+automatically but does not count or claim hook-injected recall. Ask Grok to use
+the WikiBrain skill or run `brainctl recall` when prior context is needed.
+Grok's observed runtime payload uses lowercase event values such as
+`user_prompt_submit` and `stop`; WikiBrain normalizes them to its canonical
+lifecycle names. `UserPromptSubmit` provides `prompt` and `promptId`. The
+observed `Stop` payload provides `transcriptPath`, `promptId`, and `reason`, but
+no assistant text, so WikiBrain archives an explicit unavailable placeholder
+and does not parse the external transcript automatically.
+
+For a Grok-only setup, first install the official `grok` executable as described
+in the [Grok Build overview](https://docs.x.ai/build/overview); xAI currently
+publishes `curl -fsSL https://x.ai/cli/install.sh | bash`. Review remote install
+scripts before executing them. Then use `brainctl init --clients grok`. Do not
+install both native Grok hooks and Claude hooks unless Grok's Claude-hook
+scanner is disabled; otherwise Grok can execute both definitions for the same
+event.
 
 Each Git repository is an isolated memory scope. Only
 `brainctl remember --global` deliberately crosses project boundaries. Hooks are
@@ -129,30 +153,55 @@ trust-boundary details.
 | Adaptive long-term memory | A bounded, redacted snapshot of evidence repeatedly delivered to agent context | Survives ordinary retention; remains labeled `adaptive` |
 | Explicit long-term memory | A fact or preference created with “remember” or `brainctl remember` | Survives ordinary retention; remains labeled `explicit` |
 
-Adaptive promotion uses a rolling 60-day window. A session or handoff becomes
-eligible only after it was actually injected on at least three distinct UTC
-days, across three distinct consumer provider/session pairs, with at least two
-provider/session/day injections. Replays from the same provider/session pair on
-the same day count once. Manual `brainctl recall` without a genuine consumer
-session identity does not count. Search
-results that do not reach the final `<memory-data>` do not count, memory pages do
-not count toward their own promotion, superseded evidence is ineligible, and
-workspace counters never mix. If a promoted source is superseded later, its
-adaptive derivative is hidden from recall too.
+### Adaptive promotion gate and score
 
-Meeting those hard gates is necessary but not sufficient. WikiBrain also requires
-an explainable promotion score of at least `0.65`. The score combines session
-diversity (30%), persistence across UTC days (25%), repeated final-context
-injection (25%), the share of consumer sessions backed by an explicit query
-(10%), and consumer-provider diversity (10%). Repetition components saturate at
-twice their configured hard minimum, and provider diversity saturates at two
-providers. Non-injected search hits contribute nothing. The score, threshold,
-and weighted components are written to the promoted page and document metadata;
-`adaptive_memory_min_score` configures the threshold from 0 to 1. Only direct
-search hits count as query-backed; related and recent-fallback records do not.
-The default is a deterministic initial policy, not a learned probability. Existing
-config files adopt `0.65`; set the threshold to `0` to retain the former hard-gate-only
-behavior. Pending candidates are reconsidered on their next use.
+Only `session` and `handoff` evidence can be promoted automatically. Explicit
+"remember" requests bypass this score and create `explicit` memory instead.
+Adaptive candidates first have to pass every hard gate within a rolling 60-day
+window:
+
+| Hard gate | Default |
+| --- | ---: |
+| Distinct consumer provider/session pairs that received the evidence | 3 |
+| Distinct UTC days on which it was injected | 3 |
+| Deduplicated provider/session/day injections | 2 |
+
+Passing the hard gates is necessary but not sufficient. WikiBrain then computes:
+
+```text
+score = 0.30 * min(S / 6, 1)
+      + 0.25 * min(D / 6, 1)
+      + 0.25 * min(I / 4, 1)
+      + 0.10 * (Q / S)
+      + 0.10 * min(P / 2, 1)
+```
+
+| Symbol | Meaning |
+| --- | --- |
+| `S` | Distinct consumer provider/session pairs that received the evidence |
+| `D` | Distinct UTC injection days |
+| `I` | Deduplicated provider/session/day injections |
+| `Q` | Distinct injected consumer sessions reached by a direct explicit-query hit |
+| `P` | Distinct consumer providers |
+
+The denominators `6`, `6`, and `4` are twice the default hard minimums, so those
+repetition components rise gradually and then saturate. Provider diversity
+saturates at two providers. Promotion requires `score >= 0.65` by default.
+`adaptive_memory_min_score` changes that threshold from 0 to 1; setting it to
+`0` restores hard-gate-only behavior.
+
+A replay from the same provider/session pair on the same UTC day counts once.
+Manual `brainctl recall` without a genuine consumer session identity does not
+count. Only evidence that reaches the final `<memory-data>` contributes, and only
+a direct search hit receives query-backed credit; related and recent-fallback
+records do not. Memory pages cannot promote themselves, workspace counters never
+mix, and superseded evidence is ineligible. If a promoted source is superseded
+later, its adaptive derivative is hidden from recall too.
+
+The formula is a deterministic initial policy, not a learned probability. The
+promoted page and document metadata record the total score, threshold, and each
+weighted component. A candidate below the threshold remains pending and is
+reconsidered the next time it is used.
 
 Promotion writes at most 2,000 characters of the source-verified evidence to a
 new Markdown page with the source document ID, usage counts, promotion time,
@@ -302,7 +351,7 @@ manually, open PowerShell, download the versioned installer, review it, then run
 ```powershell
 $installer = Join-Path $env:TEMP "install-wikibrain.ps1"
 Invoke-WebRequest `
-  "https://raw.githubusercontent.com/hungrytech/wikibrain/v0.1.3/scripts/install-windows.ps1" `
+  "https://raw.githubusercontent.com/hungrytech/wikibrain/v0.1.4/scripts/install-windows.ps1" `
   -OutFile $installer
 Get-Content $installer
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
@@ -348,7 +397,9 @@ merges only WikiBrain-owned entries, and preserves unrelated hooks and skills.
 | Brain state | `~/.local/share/wikibrain/` | `%LOCALAPPDATA%\WikiBrain\` |
 | Claude hooks | `~/.claude/settings.json` | `%USERPROFILE%\.claude\settings.json` |
 | Codex hooks | `~/.codex/hooks.json` | `%USERPROFILE%\.codex\hooks.json` |
+| Grok hooks (Grok-only opt-in) | `${GROK_HOME:-~/.grok}/hooks/wikibrain.json` | `%GROK_HOME%\hooks\wikibrain.json` or `%USERPROFILE%\.grok\hooks\wikibrain.json` |
 | Claude skill | `~/.claude/skills/wikibrain/` | `%USERPROFILE%\.claude\skills\wikibrain\` |
+| Grok skill (Grok-only opt-in) | `${GROK_HOME:-~/.grok}/skills/wikibrain/` | `%GROK_HOME%\skills\wikibrain\` or `%USERPROFILE%\.grok\skills\wikibrain\` |
 | Codex/Agents skill | `~/.agents/skills/wikibrain/` | `%USERPROFILE%\.agents\skills\wikibrain\` |
 
 | Event | WikiBrain action |

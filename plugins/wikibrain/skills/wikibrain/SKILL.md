@@ -7,9 +7,9 @@ description: Recall, save, inspect, pause, or delete knowledge in the user's loc
 
 # WikiBrain
 
-WikiBrain is a local reference layer shared by Claude Code and Codex. Its
-Markdown vault is user-owned, Wikimap supplies indexing and retrieval, and
-`brainctl` is the only control surface this skill should invoke.
+WikiBrain is a local reference layer shared by Claude Code, Codex, and Grok
+Build. Its Markdown vault is user-owned, Wikimap supplies indexing and
+retrieval, and `brainctl` is the only control surface this skill should invoke.
 
 ## Recall
 

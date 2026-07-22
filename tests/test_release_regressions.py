@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 import threading
+import tomllib
 import unittest
 from argparse import Namespace
 from contextlib import redirect_stdout
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
 
+from wikibrain import __version__
 from wikibrain.cli import (
     _erase_owned_paths,
     _prune_forget_receipts,
@@ -76,6 +78,47 @@ def _forget_args(**values: object) -> Namespace:
 
 
 class ReleaseRegressionTests(unittest.TestCase):
+    def test_release_version_is_consistent_across_distribution_surfaces(self) -> None:
+        project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        version = project["project"]["version"]
+        self.assertEqual(__version__, version)
+
+        plugin = json.loads(
+            (ROOT / "plugins/wikibrain/.codex-plugin/plugin.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(plugin["version"], version)
+
+        lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+        locked_package = next(
+            package
+            for package in lock["package"]
+            if package["name"] == "wikibrain-agent"
+        )
+        self.assertEqual(locked_package["version"], version)
+
+        windows_installer = (ROOT / "scripts/install-windows.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(f'[string]$Version = "{version}"', windows_installer)
+        self.assertIn(
+            f"## [{version}] - ",
+            (ROOT / "CHANGELOG.md").read_text(encoding="utf-8"),
+        )
+        for readme_name in (
+            "README.md",
+            "README.ko.md",
+            "README.ja.md",
+            "README.zh-CN.md",
+        ):
+            readme = (ROOT / readme_name).read_text(encoding="utf-8")
+            self.assertIn(
+                f"/v{version}/scripts/install-windows.ps1",
+                readme,
+                readme_name,
+            )
+
     def test_deleted_turn_cannot_be_recreated_by_exact_hook_replay(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

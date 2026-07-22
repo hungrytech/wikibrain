@@ -13,7 +13,7 @@ from typing import Any
 from .config import BrainConfig, atomic_write_text, ensure_private_directory
 
 
-CLIENTS = {"claude", "codex"}
+CLIENTS = {"claude", "codex", "grok"}
 EVENTS = ("SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "PostCompact")
 HOOK_SHIM_NAME = "wikibrain-hook"
 WINDOWS_HOOK_SHIM_NAME = "wikibrain-hook.ps1"
@@ -25,6 +25,10 @@ def default_client_path(client: str) -> Path:
         return Path.home() / ".claude" / "settings.json"
     if client == "codex":
         return Path.home() / ".codex" / "hooks.json"
+    if client == "grok":
+        grok_home = os.environ.get("GROK_HOME")
+        root = Path(grok_home).expanduser() if grok_home else Path.home() / ".grok"
+        return root / "hooks" / "wikibrain.json"
     raise ValueError(f"unsupported client: {client}")
 
 
@@ -187,18 +191,18 @@ def _handler(command: str, client: str, event: str) -> dict[str, Any]:
             "command": f"{shlex.quote(command)} hook --provider {client}",
             "timeout": timeout,
         }
-    if event == "SessionStart":
+    if event == "SessionStart" and client != "grok":
         handler["statusMessage"] = "WikiBrain: recalling local memory"
     return handler
 
 
 def hook_group(command: str, client: str, event: str) -> dict[str, Any]:
     group: dict[str, Any] = {"hooks": [_handler(command, client, event)]}
-    if event == "SessionStart":
+    if event == "SessionStart" and client != "grok":
         group["matcher"] = "startup|resume|clear|compact"
-    elif event == "PostToolUse":
+    elif event == "PostToolUse" and client != "grok":
         group["matcher"] = "Bash|Edit|Write|NotebookEdit|apply_patch"
-    elif event == "PostCompact":
+    elif event == "PostCompact" and client != "grok":
         group["matcher"] = "manual|auto"
     return group
 

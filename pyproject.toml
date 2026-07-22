@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wikibrain-agent"
-version = "0.1.3"
-description = "Local-first personal memory bridge for Claude Code, Codex, and Wikimap"
+version = "0.1.4"
+description = "Local-first personal memory bridge for Claude Code, Codex, Grok Build, and Wikimap"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Taekmin Lee" }]
-keywords = ["second-brain", "wikimap", "claude-code", "codex", "hooks"]
+keywords = ["second-brain", "wikimap", "claude-code", "codex", "grok-build", "hooks"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",

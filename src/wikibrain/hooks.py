@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
@@ -19,6 +21,13 @@ from .recall import RecallService
 from .redaction import redact_text
 from .storage import BrainStore
 from .wikimap_adapter import WikimapAdapter
+
+
+def _effective_provider(provider: str, environment: Mapping[str, str]) -> str:
+    """Attribute Claude-compatible hooks executed by Grok to Grok itself."""
+    if environment.get("GROK_HOOK_EVENT") or environment.get("GROK_SESSION_ID"):
+        return "grok"
+    return provider
 
 
 def _safe_log(config: BrainConfig | None, message: str) -> None:
@@ -130,23 +139,25 @@ def process_hook(
 
     if event.name == "SessionStart":
         result.captured = store.capture_generic(event)
-        result.context = recall.context(
-            event.cwd,
-            consumer_provider=event.provider,
-            consumer_session_id=consumer_session_id,
-        )
+        if event.provider != "grok":
+            result.context = recall.context(
+                event.cwd,
+                consumer_provider=event.provider,
+                consumer_session_id=consumer_session_id,
+            )
     elif event.name == "UserPromptSubmit":
         prompt = redact_text(event.prompt or "", config.max_field_chars)
         result.captured, event.turn_id = store.capture_prompt(
             event, prompt.text, prompt.count
         )
         result.duplicate = not result.captured
-        result.context = recall.context(
-            event.cwd,
-            prompt.text,
-            consumer_provider=event.provider,
-            consumer_session_id=consumer_session_id,
-        )
+        if event.provider != "grok":
+            result.context = recall.context(
+                event.cwd,
+                prompt.text,
+                consumer_provider=event.provider,
+                consumer_session_id=consumer_session_id,
+            )
     elif event.name == "PostToolUse":
         result.captured = store.capture_generic(event)
         result.duplicate = not result.captured
@@ -225,7 +236,9 @@ def run_hook_command(
     try:
         config = BrainConfig.load(home or default_home())
         payload = read_hook_payload(input_stream, config.max_input_bytes)
-        output, _ = process_hook(provider, payload, config)
+        output, _ = process_hook(
+            _effective_provider(provider, os.environ), payload, config
+        )
     except Exception as error:  # A memory hook must never break the host agent.
         _safe_log(config, f"hook-error {type(error).__name__}: {error}")
         output = {}

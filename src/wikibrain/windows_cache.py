@@ -140,8 +140,6 @@ def open_trusted_windows_cache(path: Path, user_home: Path) -> BinaryIO:
         ctypes.POINTER(wintypes.DWORD),
     ]
     advapi32.GetTokenInformation.restype = wintypes.BOOL
-    advapi32.EqualSid.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
-    advapi32.EqualSid.restype = wintypes.BOOL
     advapi32.GetAce.argtypes = [
         ctypes.c_void_p,
         wintypes.DWORD,
@@ -238,11 +236,6 @@ def open_trusted_windows_cache(path: Path, user_home: Path) -> BinaryIO:
         current_sid = ctypes.cast(
             token_buffer, ctypes.POINTER(TokenUser)
         ).contents.User.Sid
-        if not advapi32.EqualSid(owner_sid, current_sid):
-            raise WindowsCacheTrustError(
-                "release policy cache is not owned by the current user"
-            )
-
         def sid_string(sid: ctypes.c_void_p) -> str:
             text = wintypes.LPWSTR()
             if not advapi32.ConvertSidToStringSidW(sid, ctypes.byref(text)):
@@ -254,8 +247,18 @@ def open_trusted_windows_cache(path: Path, user_home: Path) -> BinaryIO:
             finally:
                 kernel32.LocalFree(ctypes.cast(text, ctypes.c_void_p))
 
+        current_sid_text = sid_string(current_sid)
+        owner_sid_text = sid_string(owner_sid)
+        if owner_sid_text not in {
+            current_sid_text,
+            "S-1-5-32-544",  # Elevated Windows creates files owned by Administrators.
+        }:
+            raise WindowsCacheTrustError(
+                "release policy cache has an untrusted owner"
+            )
+
         allowed_writers = {
-            sid_string(current_sid),
+            current_sid_text,
             "S-1-5-18",  # LocalSystem
             "S-1-5-32-544",  # Builtin Administrators
             "S-1-3-0",  # Creator Owner

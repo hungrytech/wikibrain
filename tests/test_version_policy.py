@@ -70,6 +70,78 @@ def _secure_windows_directory(path: Path) -> None:
     )
 
 
+def _enable_windows_restore_privilege() -> None:
+    import ctypes
+    from ctypes import wintypes
+
+    class Luid(ctypes.Structure):
+        _fields_ = [("LowPart", wintypes.DWORD), ("HighPart", wintypes.LONG)]
+
+    class LuidAndAttributes(ctypes.Structure):
+        _fields_ = [("Luid", Luid), ("Attributes", wintypes.DWORD)]
+
+    class TokenPrivileges(ctypes.Structure):
+        _fields_ = [
+            ("PrivilegeCount", wintypes.DWORD),
+            ("Privileges", LuidAndAttributes * 1),
+        ]
+
+    win_dll = getattr(ctypes, "WinDLL")
+    win_error = getattr(ctypes, "WinError")
+    get_last_error = getattr(ctypes, "get_last_error")
+    set_last_error = getattr(ctypes, "set_last_error")
+    advapi32 = win_dll("advapi32", use_last_error=True)
+    kernel32 = win_dll("kernel32", use_last_error=True)
+    token = wintypes.HANDLE()
+    advapi32.OpenProcessToken.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.HANDLE),
+    ]
+    advapi32.OpenProcessToken.restype = wintypes.BOOL
+    advapi32.LookupPrivilegeValueW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        ctypes.POINTER(Luid),
+    ]
+    advapi32.LookupPrivilegeValueW.restype = wintypes.BOOL
+    advapi32.AdjustTokenPrivileges.argtypes = [
+        wintypes.HANDLE,
+        wintypes.BOOL,
+        ctypes.POINTER(TokenPrivileges),
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    advapi32.AdjustTokenPrivileges.restype = wintypes.BOOL
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    if not advapi32.OpenProcessToken(
+        kernel32.GetCurrentProcess(), 0x0020 | 0x0008, ctypes.byref(token)
+    ):
+        raise win_error(get_last_error())
+    try:
+        luid = Luid()
+        if not advapi32.LookupPrivilegeValueW(
+            None, "SeRestorePrivilege", ctypes.byref(luid)
+        ):
+            raise win_error(get_last_error())
+        privileges = TokenPrivileges()
+        privileges.PrivilegeCount = 1
+        privileges.Privileges[0].Luid = luid
+        privileges.Privileges[0].Attributes = 0x0002
+        set_last_error(0)
+        if not advapi32.AdjustTokenPrivileges(
+            token, False, ctypes.byref(privileges), 0, None, None
+        ):
+            raise win_error(get_last_error())
+        if get_last_error() == 1300:
+            raise win_error(1300)
+    finally:
+        kernel32.CloseHandle(token)
+
+
 def _set_windows_security(
     path: Path, *, owner_sid: str | None = None, null_dacl: bool = False
 ) -> None:
@@ -101,6 +173,7 @@ def _set_windows_security(
     kernel32.LocalFree.restype = ctypes.c_void_p
     security_information = 0
     if owner_sid is not None:
+        _enable_windows_restore_privilege()
         if not advapi32.ConvertStringSidToSidW(owner_sid, ctypes.byref(owner)):
             raise win_error(get_last_error())
         security_information |= 0x00000001
@@ -360,7 +433,6 @@ class VersionPolicyTests(unittest.TestCase):
                 _fetch_remote_policy()
         self.assertLess(time.monotonic() - started, 0.2)
 
-    @unittest.skipIf(os.name == "nt", "POSIX native reap contract")
     def test_native_reap_bypasses_broken_popen_lifecycle_methods(self) -> None:
         process = subprocess.Popen(
             [sys.executable, "-c", "import time; time.sleep(3600)"],
@@ -375,8 +447,10 @@ class VersionPolicyTests(unittest.TestCase):
             self.assertTrue(
                 _cleanup_fetch_process(process, time.monotonic() + 0.5)
             )
-        with self.assertRaises(ChildProcessError):
-            os.waitpid(process_id, os.WNOHANG)
+        self.assertIsNotNone(process.returncode)
+        if os.name != "nt":
+            with self.assertRaises(ChildProcessError):
+                os.waitpid(process_id, os.WNOHANG)
 
     @unittest.skipIf(os.name == "nt", "POSIX child/FD inspection")
     def test_repeated_timeouts_leave_no_child_or_file_descriptor(self) -> None:
@@ -645,7 +719,7 @@ class VersionPolicyTests(unittest.TestCase):
             cache = Path(temporary) / CACHE_NAME
             cache.write_bytes(b"unsafe")
             _set_windows_security(cache, owner_sid="S-1-5-18")
-            with self.assertRaisesRegex(OSError, "not owned"):
+            with self.assertRaisesRegex(OSError, "untrusted owner"):
                 _open_trusted_cache(cache, cache.parent)
 
     @unittest.skipUnless(os.name == "nt", "Windows handle and DACL contract")

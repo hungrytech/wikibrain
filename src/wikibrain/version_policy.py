@@ -12,8 +12,8 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from http.client import HTTPException
 from pathlib import Path
-from typing import BinaryIO, Callable
-from urllib.request import Request, urlopen
+from typing import Any, BinaryIO, Callable
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from .config import atomic_write_text
 
@@ -152,6 +152,23 @@ def parse_release_policy(
     )
 
 
+class _NoRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        req: Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        return None
+
+
+def _open_policy_url(request: Request, timeout: float) -> Any:
+    return build_opener(_NoRedirectHandler).open(request, timeout=timeout)
+
+
 def _download_remote_policy() -> bytes:
     request = Request(
         POLICY_URL,
@@ -160,7 +177,7 @@ def _download_remote_policy() -> bytes:
             "User-Agent": "wikibrain-version-policy",
         },
     )
-    with urlopen(request, timeout=SOCKET_TIMEOUT) as response:
+    with _open_policy_url(request, timeout=SOCKET_TIMEOUT) as response:
         if response.geturl() != POLICY_URL:
             raise ValueError("release policy response is not the official policy URL")
         payload = response.read(MAX_POLICY_BYTES + 1)

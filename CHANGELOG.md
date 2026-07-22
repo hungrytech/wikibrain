@@ -13,8 +13,9 @@ The project follows [Semantic Versioning](https://semver.org/).
 - Bound official release-policy retrieval by a monotonic 2.0-second request budget
   plus a 0.5-second native cleanup reserve in a directly managed subprocess. The
   worker also has a self-deadline, and timeout cleanup verifies OS-native
-  termination/reaping before returning, without a persistent multiprocessing helper,
-  while retaining the socket timeout and response-size cap.
+  releases descriptors/handles only after OS-confirmed process death, and redirects are
+  rejected before urllib can contact any target while retaining the socket timeout and
+  response-size cap.
 - Validate cached policy files before reading them: POSIX caches must be non-symlink
   regular files owned by the current user, free of extended ACLs, and not group/other
   writable; Windows opens the cache with a non-following kernel handle and validates

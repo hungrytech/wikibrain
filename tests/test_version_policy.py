@@ -265,7 +265,7 @@ class VersionPolicyTests(unittest.TestCase):
                 "https://raw.githubusercontent.com/hungrytech/wikibrain/main/release-policy.json",
             )
 
-        with patch("wikibrain.version_policy.urlopen", side_effect=open_trusted):
+        with patch("wikibrain.version_policy._open_policy_url", side_effect=open_trusted):
             self.assertEqual(_download_remote_policy(), _policy())
 
         request, timeout = requests[0]
@@ -273,7 +273,7 @@ class VersionPolicyTests(unittest.TestCase):
         self.assertEqual(timeout, 2.0)
 
         with patch(
-            "wikibrain.version_policy.urlopen",
+            "wikibrain.version_policy._open_policy_url",
             return_value=_Response(_policy(), "https://example.com/policy.json"),
         ):
             with self.assertRaisesRegex(ValueError, "official policy URL"):
@@ -285,13 +285,63 @@ class VersionPolicyTests(unittest.TestCase):
         ):
             with self.subTest(redirected_url=redirected_url):
                 with patch(
-                    "wikibrain.version_policy.urlopen",
+                    "wikibrain.version_policy._open_policy_url",
                     return_value=_Response(_policy(), redirected_url),
                 ):
                     with self.assertRaisesRegex(ValueError, "official policy URL"):
                         _download_remote_policy()
 
         self.assertEqual(POLICY_URL, requests[0][0].full_url)
+
+    def test_remote_policy_redirect_is_rejected_before_target_request(self) -> None:
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from urllib.error import HTTPError
+
+        target_hits: list[str] = []
+
+        class TargetHandler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                target_hits.append(self.path)
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(_policy())
+
+            def log_message(self, format: str, *args: object) -> None:
+                return None
+
+        target = ThreadingHTTPServer(("127.0.0.1", 0), TargetHandler)
+        target_url = f"http://127.0.0.1:{target.server_port}/attacker"
+
+        class RedirectHandler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                self.send_response(302)
+                self.send_header("Location", target_url)
+                self.end_headers()
+
+            def log_message(self, format: str, *args: object) -> None:
+                return None
+
+        redirect = ThreadingHTTPServer(("127.0.0.1", 0), RedirectHandler)
+        threads = [
+            threading.Thread(target=target.serve_forever, daemon=True),
+            threading.Thread(target=redirect.serve_forever, daemon=True),
+        ]
+        for thread in threads:
+            thread.start()
+        try:
+            trusted_url = f"http://127.0.0.1:{redirect.server_port}/policy.json"
+            with patch("wikibrain.version_policy.POLICY_URL", trusted_url):
+                with self.assertRaises(HTTPError):
+                    _download_remote_policy()
+            self.assertEqual(target_hits, [])
+        finally:
+            redirect.shutdown()
+            target.shutdown()
+            redirect.server_close()
+            target.server_close()
+            for thread in threads:
+                thread.join(timeout=1)
 
     def test_truncated_http_body_fails_open_and_is_negatively_cached(self) -> None:
         class TruncatedResponse:
@@ -310,7 +360,7 @@ class VersionPolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary)
             with patch(
-                "wikibrain.version_policy.urlopen",
+                "wikibrain.version_policy._open_policy_url",
                 return_value=TruncatedResponse(),
             ):
                 decision = check_release_policy(
@@ -320,7 +370,7 @@ class VersionPolicyTests(unittest.TestCase):
                     fetcher=_download_remote_policy,
                 )
             with patch(
-                "wikibrain.version_policy.urlopen",
+                "wikibrain.version_policy._open_policy_url",
                 side_effect=AssertionError("negative cache must avoid another request"),
             ):
                 cached = check_release_policy(

@@ -35,6 +35,7 @@ class HomebrewTemplateTests(unittest.TestCase):
             self.assertEqual(completed.returncode, 0, completed.stderr)
             formula = output.read_text(encoding="utf-8")
             self.assertNotIn("@OWNER@", formula)
+            self.assertIn('depends_on "libyaml"', formula)
             self.assertIn('depends_on "python@3.13"', formula)
             self.assertIn("wikimap-1.1.0.tar.gz", formula)
             self.assertIn("setuptools-83.0.0-py3-none-any.whl", formula)

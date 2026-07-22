@@ -791,7 +791,10 @@ class VersionPolicyTests(unittest.TestCase):
             for marker in (
                 "system.posix_acl_access",
                 "system.nfs4_acl",
-                "trusted.richacl",
+                "security.nfs4_acl",
+                "trusted.nfs4_acl",
+                "system.richacl",
+                "trusted.sgi_acl_file",
             ):
                 with self.subTest(marker=marker), patch(
                     "wikibrain.version_policy.os.listxattr",

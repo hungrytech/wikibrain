@@ -25,6 +25,7 @@ from wikibrain.version_policy import (
     PolicyDecision,
     _cleanup_fetch_process,
     _download_remote_policy,
+    _fd_has_extended_acl,
     _fetch_remote_policy,
     _open_trusted_cache,
     check_release_policy,
@@ -534,6 +535,62 @@ class VersionPolicyTests(unittest.TestCase):
         self.assertEqual(children(), before_children)
         self.assertEqual(len(os.listdir("/dev/fd")), before_fds)
 
+    @unittest.skipUnless(os.name == "nt", "Windows native handle inspection")
+    def test_repeated_timeouts_leave_no_windows_process_handles(self) -> None:
+        import ctypes
+        import gc
+        import threading
+        from ctypes import wintypes
+
+        win_dll = getattr(ctypes, "WinDLL")
+        win_error = getattr(ctypes, "WinError")
+        get_last_error = getattr(ctypes, "get_last_error")
+        kernel32 = win_dll("kernel32", use_last_error=True)
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel32.GetProcessHandleCount.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        kernel32.GetProcessHandleCount.restype = wintypes.BOOL
+
+        def handle_count() -> int:
+            count = wintypes.DWORD()
+            if not kernel32.GetProcessHandleCount(
+                kernel32.GetCurrentProcess(), ctypes.byref(count)
+            ):
+                raise win_error(get_last_error())
+            return count.value
+
+        with (
+            patch("wikibrain.version_policy.FETCH_REQUEST_DEADLINE", 0.02),
+            patch("wikibrain.version_policy.FETCH_CLEANUP_RESERVE", 0.01),
+            patch("wikibrain.version_policy.TOTAL_FETCH_DEADLINE", 0.03),
+        ):
+            for _ in range(3):
+                with self.assertRaises(TimeoutError):
+                    _fetch_remote_policy(child_code="import time; time.sleep(3600)")
+            gc.collect()
+            baseline_handles = handle_count()
+            baseline_threads = threading.active_count()
+            for _ in range(25):
+                with self.assertRaises(TimeoutError):
+                    _fetch_remote_policy(child_code="import time; time.sleep(3600)")
+            gc.collect()
+
+        stabilization_deadline = time.monotonic() + 1.0
+        current_handles = handle_count()
+        current_threads = threading.active_count()
+        while (
+            current_handles > baseline_handles + 1
+            or current_threads != baseline_threads
+        ) and time.monotonic() < stabilization_deadline:
+            time.sleep(0.01)
+            gc.collect()
+            current_handles = handle_count()
+            current_threads = threading.active_count()
+        self.assertLessEqual(current_handles, baseline_handles + 1)
+        self.assertEqual(current_threads, baseline_threads)
+
     def test_schema_rejects_bool_float_and_duplicate_keys(self) -> None:
         valid_fields = (
             '"latest_version":"0.1.7",'
@@ -710,6 +767,46 @@ class VersionPolicyTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(OSError, "extended ACL"):
                 _open_trusted_cache(cache, cache.parent)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux ACL contract")
+    def test_cache_rejects_a_native_linux_posix_acl(self) -> None:
+        import shutil
+
+        if shutil.which("setfacl") is None:
+            self.skipTest("setfacl is unavailable")
+        with tempfile.TemporaryDirectory() as temporary:
+            cache = Path(temporary) / CACHE_NAME
+            cache.write_text("{}", encoding="utf-8")
+            cache.chmod(0o600)
+            subprocess.run(
+                ["setfacl", "-m", "u:65534:r--", str(cache)],
+                check=True,
+            )
+            with self.assertRaisesRegex(OSError, "extended ACL"):
+                _open_trusted_cache(cache, cache.parent)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux ACL contract")
+    def test_linux_acl_markers_and_inspection_errors_fail_closed(self) -> None:
+        with tempfile.TemporaryFile() as cache:
+            for marker in (
+                "system.posix_acl_access",
+                "system.nfs4_acl",
+                "trusted.richacl",
+            ):
+                with self.subTest(marker=marker), patch(
+                    "wikibrain.version_policy.os.listxattr",
+                    return_value=[marker],
+                ):
+                    self.assertTrue(_fd_has_extended_acl(cache.fileno()))
+            with patch(
+                "wikibrain.version_policy.os.listxattr",
+                side_effect=OSError("inspection failed"),
+            ):
+                with self.assertRaisesRegex(OSError, "inspection failed"):
+                    _fd_has_extended_acl(cache.fileno())
+            with patch("wikibrain.version_policy.os.listxattr", None):
+                with self.assertRaisesRegex(OSError, "inspection is unavailable"):
+                    _fd_has_extended_acl(cache.fileno())
 
     @unittest.skipUnless(os.name == "nt", "Windows reparse contract")
     def test_windows_cache_rejects_final_reparse_points_and_junction_escapes(

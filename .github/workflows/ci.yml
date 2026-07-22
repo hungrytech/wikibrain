@@ -23,6 +23,11 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
+      - name: Install native ACL tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes acl
+
       - name: Install WikiBrain
         run: |
           python -m pip install --upgrade pip

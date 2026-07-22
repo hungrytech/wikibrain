@@ -11,6 +11,7 @@ class NormalizedEvent:
     session_id: str
     turn_id: str | None
     cwd: str
+    session_id_is_fallback: bool = False
     prompt: str | None = None
     assistant_message: str | None = None
     compact_summary: str | None = None

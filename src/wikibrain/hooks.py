@@ -126,13 +126,14 @@ def process_hook(
         time_budget=3.0 if has_long_budget else 1.0,
     )
     result = HookResult()
+    consumer_session_id = None if event.session_id_is_fallback else event.session_id
 
     if event.name == "SessionStart":
         result.captured = store.capture_generic(event)
         result.context = recall.context(
             event.cwd,
             consumer_provider=event.provider,
-            consumer_session_id=event.session_id,
+            consumer_session_id=consumer_session_id,
         )
     elif event.name == "UserPromptSubmit":
         prompt = redact_text(event.prompt or "", config.max_field_chars)
@@ -144,7 +145,7 @@ def process_hook(
             event.cwd,
             prompt.text,
             consumer_provider=event.provider,
-            consumer_session_id=event.session_id,
+            consumer_session_id=consumer_session_id,
         )
     elif event.name == "PostToolUse":
         result.captured = store.capture_generic(event)

@@ -15,6 +15,7 @@ from unittest.mock import patch
 from wikibrain.config import BrainConfig
 from wikibrain.cli import command_forget
 from wikibrain.curation import Curator
+from wikibrain.hooks import process_hook
 from wikibrain.recall import RecallService
 from wikibrain.storage import BrainStore, adaptive_memory_id
 from wikibrain.wikimap_adapter import WikimapAdapter
@@ -271,6 +272,29 @@ class AdaptiveMemoryTests(unittest.TestCase):
                     "SELECT COUNT(*) FROM document_usage"
                 ).fetchone()[0]
             self.assertEqual(usage_count, 0)
+
+    def test_hook_fallback_session_does_not_count_usage(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            config, workspace, store, _, _ = self.make_brain(Path(temporary))
+            self.register_source(config, workspace, store)
+
+            process_hook(
+                "claude",
+                {
+                    "hook_event_name": "UserPromptSubmit",
+                    "cwd": str(workspace),
+                    "prompt": "Project",
+                },
+                config,
+            )
+
+            with store.connect() as connection:
+                usage = connection.execute(
+                    "SELECT consumer_provider, consumer_session_id "
+                    "FROM document_usage WHERE document_id = ?",
+                    ("turn-source",),
+                ).fetchall()
+            self.assertEqual(usage, [])
 
     def test_concurrent_promotions_share_one_deterministic_file(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

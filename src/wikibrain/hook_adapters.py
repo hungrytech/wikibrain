@@ -61,9 +61,8 @@ def normalize_hook(
     if event_name not in SUPPORTED_EVENTS:
         raise ValueError(f"unsupported hook event: {event_name!r}")
     cwd = _string(payload.get("cwd")) or str(Path.cwd())
-    session_id = _string(payload.get("session_id")) or _fallback_session(
-        provider, payload, cwd
-    )
+    supplied_session_id = _string(payload.get("session_id"))
+    session_id = supplied_session_id or _fallback_session(provider, payload, cwd)
     turn_id = _string(payload.get("turn_id"))
     prompt = _string(payload.get("prompt"))
     assistant = _string(payload.get("last_assistant_message"))
@@ -95,6 +94,7 @@ def normalize_hook(
         session_id=session_id,
         turn_id=turn_id,
         cwd=cwd,
+        session_id_is_fallback=supplied_session_id is None,
         prompt=prompt,
         assistant_message=assistant,
         compact_summary=compact_summary,

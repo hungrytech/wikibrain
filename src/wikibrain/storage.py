@@ -8,13 +8,20 @@ import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Iterator, Literal
+from typing import Any, Callable, Iterator, Literal
 
 from .config import PRIVATE_FILE_MODE, ensure_private_directory
 from .models import NormalizedEvent
 
 
 SCHEMA_VERSION = 9
+ADAPTIVE_SCORE_WEIGHTS = {
+    "session_diversity": 0.30,
+    "day_persistence": 0.25,
+    "injection_recurrence": 0.25,
+    "query_backed_ratio": 0.10,
+    "provider_diversity": 0.10,
+}
 
 
 class ClosingConnection(sqlite3.Connection):
@@ -42,6 +49,33 @@ def stable_hash(*parts: str | None) -> str:
         digest.update((part or "").encode("utf-8", errors="replace"))
         digest.update(b"\0")
     return digest.hexdigest()
+
+
+def adaptive_promotion_score(
+    *,
+    distinct_sessions: int,
+    distinct_providers: int,
+    distinct_days: int,
+    search_sessions: int,
+    context_injections: int,
+    min_sessions: int,
+    min_days: int,
+    min_injections: int,
+) -> tuple[float, dict[str, float]]:
+    components = {
+        "session_diversity": ADAPTIVE_SCORE_WEIGHTS["session_diversity"]
+        * min(distinct_sessions / (2 * min_sessions), 1.0),
+        "day_persistence": ADAPTIVE_SCORE_WEIGHTS["day_persistence"]
+        * min(distinct_days / (2 * min_days), 1.0),
+        "injection_recurrence": ADAPTIVE_SCORE_WEIGHTS["injection_recurrence"]
+        * min(context_injections / (2 * min_injections), 1.0),
+        "query_backed_ratio": ADAPTIVE_SCORE_WEIGHTS["query_backed_ratio"]
+        * (search_sessions / distinct_sessions if distinct_sessions else 0.0),
+        "provider_diversity": ADAPTIVE_SCORE_WEIGHTS["provider_diversity"]
+        * min(distinct_providers / 2, 1.0),
+    }
+    rounded = {key: round(value, 6) for key, value in components.items()}
+    return round(sum(rounded.values()), 6), rounded
 
 
 def turn_document_id(
@@ -112,17 +146,41 @@ class BrainStore:
         return connection
 
     @contextmanager
-    def transaction(self) -> Iterator[sqlite3.Connection]:
+    def transaction(
+        self,
+        *,
+        on_rollback: Callable[[], None] | None = None,
+    ) -> Iterator[sqlite3.Connection]:
         connection = self.connect()
+        transaction_started = False
+        primary_error: BaseException | None = None
         try:
             connection.execute("BEGIN IMMEDIATE")
+            transaction_started = True
             yield connection
             connection.commit()
-        except Exception:
-            connection.rollback()
+        except BaseException as error:
+            primary_error = error
+            try:
+                if transaction_started and on_rollback is not None:
+                    on_rollback()
+            except BaseException as compensation_error:
+                primary_error.add_note(
+                    f"rollback compensation failed: {compensation_error!r}"
+                )
+            if transaction_started:
+                try:
+                    connection.rollback()
+                except BaseException as rollback_error:
+                    primary_error.add_note(f"SQLite rollback failed: {rollback_error!r}")
             raise
         finally:
-            connection.close()
+            try:
+                connection.close()
+            except BaseException as close_error:
+                if primary_error is None:
+                    raise
+                primary_error.add_note(f"SQLite close failed: {close_error!r}")
 
     def initialize(self) -> None:
         with self.connect() as connection:
@@ -1312,8 +1370,17 @@ class BrainStore:
         workspace: str | None = None,
         metadata: dict[str, Any] | None = None,
         relations: dict[str, list[str]] | None = None,
+        insert_only: bool = False,
+        publish: Callable[[], None] | None = None,
+        rollback_publish: Callable[[], None] | None = None,
     ) -> bool:
-        with self.transaction() as connection:
+        publish_started = False
+
+        def compensate_publish() -> None:
+            if publish_started and rollback_publish is not None:
+                rollback_publish()
+
+        with self.transaction(on_rollback=compensate_publish) as connection:
             document_metadata = metadata or {}
             adaptive_source_document_id = (
                 str(document_metadata.get("adaptive_source_document_id"))
@@ -1442,6 +1509,8 @@ class BrainStore:
                 "SELECT workspace FROM documents WHERE document_id = ?",
                 (document_id,),
             ).fetchone()
+            if existing_document is not None and insert_only:
+                return False
             if (
                 existing_document is not None
                 and str(existing_document["workspace"] or "") != str(workspace or "")
@@ -1547,6 +1616,9 @@ class BrainStore:
                     """,
                     (document_id, provider, session_id, turn_key),
                 )
+            if publish is not None:
+                publish_started = True
+                publish()
             return True
 
     @staticmethod
@@ -1734,9 +1806,12 @@ class BrainStore:
         min_sessions: int = 3,
         min_days: int = 3,
         min_injections: int = 2,
+        min_score: float = 0.65,
     ) -> dict[str, Any]:
         if min(window_days, min_sessions, min_days, min_injections) < 1:
             raise ValueError("adaptive memory thresholds must be positive")
+        if not 0 <= min_score <= 1:
+            raise ValueError("adaptive memory score threshold must be between 0 and 1")
         moment = datetime.fromisoformat((used_at or utc_now()).replace("Z", "+00:00"))
         if moment.tzinfo is None:
             moment = moment.replace(tzinfo=UTC)
@@ -1757,10 +1832,15 @@ class BrainStore:
             if source is None or str(source["kind"]) not in {"session", "handoff"}:
                 return {
                     "eligible": False,
+                    "hard_gate_met": False,
                     "distinct_sessions": 0,
+                    "distinct_providers": 0,
                     "distinct_days": 0,
                     "search_sessions": 0,
                     "context_injections": 0,
+                    "promotion_score": 0.0,
+                    "promotion_score_threshold": min_score,
+                    "promotion_score_components": {},
                     "last_used_at": normalized_used_at,
                 }
             connection.execute(
@@ -1773,7 +1853,10 @@ class BrainStore:
                     document_id, usage_day,
                     consumer_provider, consumer_session_id
                 ) DO UPDATE SET
-                    searched = MAX(document_usage.searched, excluded.searched),
+                    searched = MAX(
+                        document_usage.searched * document_usage.injected,
+                        excluded.searched
+                    ),
                     injected = MAX(document_usage.injected, excluded.injected),
                     last_used_at = MAX(document_usage.last_used_at, excluded.last_used_at)
                 """,
@@ -1782,7 +1865,7 @@ class BrainStore:
                     usage_day,
                     consumer_provider,
                     consumer_session_id,
-                    int(searched),
+                    int(searched and injected),
                     int(injected),
                     normalized_used_at,
                 ),
@@ -1790,10 +1873,15 @@ class BrainStore:
             row = connection.execute(
                 """
                 SELECT
-                    COUNT(DISTINCT consumer_provider || char(31) ||
-                        consumer_session_id) AS distinct_sessions,
-                    COUNT(DISTINCT usage_day) AS distinct_days,
-                    COUNT(DISTINCT CASE WHEN searched = 1 THEN
+                    COUNT(DISTINCT CASE WHEN injected = 1 THEN
+                        consumer_provider || char(31) || consumer_session_id
+                    END) AS distinct_sessions,
+                    COUNT(DISTINCT CASE WHEN injected = 1 THEN
+                        consumer_provider
+                    END) AS distinct_providers,
+                    COUNT(DISTINCT CASE WHEN injected = 1 THEN usage_day END)
+                        AS distinct_days,
+                    COUNT(DISTINCT CASE WHEN searched = 1 AND injected = 1 THEN
                         consumer_provider || char(31) || consumer_session_id
                     END) AS search_sessions,
                     SUM(CASE WHEN injected = 1 THEN 1 ELSE 0 END)
@@ -1806,11 +1894,25 @@ class BrainStore:
             ).fetchone()
             stats = {
                 "distinct_sessions": int(row["distinct_sessions"] or 0),
+                "distinct_providers": int(row["distinct_providers"] or 0),
                 "distinct_days": int(row["distinct_days"] or 0),
                 "search_sessions": int(row["search_sessions"] or 0),
                 "context_injections": int(row["context_injections"] or 0),
                 "last_used_at": str(row["last_used_at"] or normalized_used_at),
             }
+            promotion_score, score_components = adaptive_promotion_score(
+                distinct_sessions=stats["distinct_sessions"],
+                distinct_providers=stats["distinct_providers"],
+                distinct_days=stats["distinct_days"],
+                search_sessions=stats["search_sessions"],
+                context_injections=stats["context_injections"],
+                min_sessions=min_sessions,
+                min_days=min_days,
+                min_injections=min_injections,
+            )
+            stats["promotion_score_components"] = score_components
+            stats["promotion_score"] = promotion_score
+            stats["promotion_score_threshold"] = min_score
             promoted = connection.execute(
                 "SELECT 1 FROM adaptive_memories WHERE source_document_id = ?",
                 (document_id,),
@@ -1826,12 +1928,16 @@ class BrainStore:
                 """,
                 (document_id, document_id),
             ).fetchone()
+            stats["hard_gate_met"] = bool(
+                stats["distinct_sessions"] >= min_sessions
+                and stats["distinct_days"] >= min_days
+                and stats["context_injections"] >= min_injections
+            )
             stats["eligible"] = bool(
                 promoted is None
                 and superseded is None
-                and stats["distinct_sessions"] >= min_sessions
-                and stats["distinct_days"] >= min_days
-                and stats["context_injections"] >= min_injections
+                and stats["hard_gate_met"]
+                and stats["promotion_score"] >= min_score
             )
             if promoted is not None:
                 connection.execute(

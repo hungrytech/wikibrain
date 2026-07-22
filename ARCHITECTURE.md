@@ -84,6 +84,27 @@ records rendered into the final `<memory-data>` count. Same-provider/session/day
 replays are idempotent, and manual recalls without a consumer identity do not
 count. Explicit and adaptive memory pages do not feed their own counters, superseded
 sources are excluded, and each source's workspace remains the counting scope.
+Passing the hard gates is necessary but not sufficient. An explainable score must
+also meet `adaptive_memory_min_score` (default `0.65`). Its weighted contributions
+are session diversity `0.30`, UTC-day persistence `0.25`, final-context injection
+recurrence `0.25`, query-backed session ratio `0.10`, and provider diversity
+`0.10`. The first three ratios saturate at twice their configured hard minimum;
+provider diversity saturates at two providers. Search-only rows with
+`injected = 0` contribute to no count or score. Only direct search hits contribute
+to the query-backed ratio; one-hop related and recent-fallback records do not.
+The score, threshold, and weighted components are persisted in both the adaptive
+Markdown evidence block and document metadata, so promotion remains auditable
+without rerunning historical queries. Adaptive publication is first-writer-wins:
+the SQLite transaction selects one winner and only its in-transaction publication
+callback writes the deterministic Markdown path. If publication or commit fails,
+filesystem compensation runs before the SQLite write lock is released; it performs
+filesystem-only work to avoid self-deadlock and prolonged writer starvation. This
+prevents concurrent writers from mixing file evidence and metadata or deleting a
+later winner's file.
+The default score is an initial deterministic policy, not a learned probability.
+Legacy config files receive `0.65`; setting the threshold to `0` restores
+hard-gate-only behavior, and pending candidates are reconsidered on their next use.
+This score measures repeated utility, not truth or correctness.
 A later source supersession is propagated to its adaptive derivative so stale
 retained evidence remains hidden. Old usage rows are pruned as new usage arrives.
 

@@ -74,6 +74,7 @@ class BrainConfig:
     adaptive_memory_min_sessions: int = 3
     adaptive_memory_min_days: int = 3
     adaptive_memory_min_injections: int = 2
+    adaptive_memory_min_score: float = 0.65
     adaptive_memory_max_chars: int = 2_000
     wikimap_command: str = "wikimap"
     update_on_stop: bool = True

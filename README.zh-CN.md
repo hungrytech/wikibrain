@@ -131,6 +131,17 @@ UTC 日期、3 个不同的 consumer provider/session pair 中实际进入最终
 superseded 证据没有资格，使用量也不会跨 workspace 合并。若 source 在提升后被
 superseded，其派生的 adaptive memory 也会从 recall 中隐藏。
 
+仅满足这些硬门槛还不足以提升。WikiBrain 还要求可解释的提升分数达到默认值
+`0.65`。该分数由 session 多样性（30%）、跨不同 UTC 日期的持续性（25%）、最终
+上下文中的重复注入（25%）、由显式 query 支持的 consumer session 比例（10%）和
+consumer provider 多样性（10%）组成。重复项在配置的硬门槛两倍处饱和，provider
+多样性在两个 provider 处饱和。未进入最终上下文的搜索结果不贡献分数。提升后的页面
+和 document metadata 会记录分数、阈值及加权分项；可通过
+`adaptive_memory_min_score` 在 0 到 1 之间调整阈值。只有显式搜索的 direct hit
+计入 query-backed，related 和 recent fallback 记录不计入。默认值是确定性的初始策略，
+并非学习得到的概率。已有 config 也会采用 `0.65`；若要保留此前仅使用硬门槛的行为，
+请将阈值设为 `0`。pending candidate 会在下次使用时重新评估。
+
 提升时只把经 source 验证的证据中最多 2,000 个字符写入新的 Markdown 页面，并
 记录 source 文档 ID、使用次数、提升时间及 `memory_kind: adaptive`。它表示反复
 有用的上下文，不代表系统自动断言其内容为真。原始的 90 天证据过期后，这个较小

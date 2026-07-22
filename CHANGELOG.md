@@ -19,6 +19,16 @@ The project follows [Semantic Versioning](https://semver.org/).
 - English, Korean, Japanese, and Simplified Chinese documentation distinguishing
   90-day short-term evidence, adaptive long-term memory, and explicit long-term
   memory.
+- Explainable adaptive-promotion scoring with a default `0.65` threshold across
+  session diversity, UTC-day persistence, final-context injection recurrence,
+  query-backed use, and provider diversity. Hard safety gates remain mandatory;
+  non-injected search hits contribute nothing, and each promoted Markdown page
+  and document metadata records the score, threshold, and weighted components.
+- Direct-search provenance for query-backed scoring; related and recent-fallback
+  context no longer receives search credit.
+- First-writer-wins adaptive publication keeps concurrent Markdown evidence and
+  SQLite promotion metadata from different attempts from being mixed; rollback
+  compensation runs before releasing the SQLite writer lock.
 
 ### Changed
 

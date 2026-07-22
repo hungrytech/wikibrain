@@ -121,6 +121,19 @@ handoff が異なる UTC 日付で 3 日以上、異なる consumer provider/ses
 利用回数を合算することもありません。昇格後に source が superseded された場合、
 派生した adaptive memory も recall から隠します。
 
+これらのハードゲートを満たすだけでは昇格しません。WikiBrain は、説明可能な昇格
+スコアがデフォルトの `0.65` 以上であることも要求します。スコアは session の多様性
+30%、異なる UTC 日にわたる継続性 25%、最終コンテキストへの反復注入 25%、明示的な
+query に基づく consumer session の割合 10%、consumer provider の多様性 10%を
+合算します。反復要素は設定したハード最小値の 2 倍で飽和し、provider の多様性は
+2 provider で飽和します。最終コンテキストに注入されなかった検索結果は寄与しません。
+昇格ページと document metadata にはスコア、しきい値、重み付き要素を記録し、
+`adaptive_memory_min_score` で 0 から 1 のしきい値を調整できます。query-backed として
+数えるのは明示的な検索の direct hit だけで、related と recent fallback は数えません。
+デフォルト値は学習済み確率ではなく、決定的な初期ポリシーです。既存 config にも `0.65`
+が適用されます。以前の hard-gate-only 動作を維持するには、しきい値を `0` にします。
+pending candidate は次回の利用時に再評価されます。
+
 昇格では source で確認した証拠を最大 2,000 文字だけ新しい Markdown ページへ
 保存し、source 文書 ID、利用回数、昇格時刻、`memory_kind: adaptive` を記録します。
 これは繰り返し有用だったコンテキストであり、内容が真実だという自動判定では

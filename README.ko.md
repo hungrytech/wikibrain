@@ -139,6 +139,19 @@ identity가 없는 수동 `brainctl recall`은 세지 않습니다. 최종 `<mem
 다른 workspace의 사용량도 합치지 않습니다. 승격 뒤 source가 superseded되면 파생된
 adaptive memory도 recall에서 숨깁니다.
 
+이 hard gate를 통과하는 것만으로는 충분하지 않습니다. WikiBrain은 설명 가능한 승격
+점수가 기본 `0.65` 이상이어야 한다고 추가로 요구합니다. 점수는 session 다양성 30%,
+서로 다른 UTC 날짜에 걸친 지속성 25%, 최종 맥락의 반복 주입 25%, 명시적 query에
+기반한 consumer session 비율 10%, consumer provider 다양성 10%를 합산합니다. 반복
+항목은 설정된 hard minimum의 두 배에서 포화하고 provider 다양성은 두 provider에서
+포화합니다. 최종 맥락에 주입되지 않은 검색 결과는 점수에 기여하지 않습니다. 승격된
+페이지와 document metadata에는 점수·threshold·가중 component를 함께 기록하며,
+`adaptive_memory_min_score`로 0부터 1 사이의 threshold를 조정할 수 있습니다. 명시적
+검색의 direct hit만 query-backed로 세며 related·recent fallback record는 세지 않습니다.
+기본값은 학습된 확률이 아니라 결정적인 초기 정책입니다. 기존 config도 `0.65`를 적용하며,
+이전 hard-gate-only 동작을 유지하려면 threshold를 `0`으로 설정합니다. pending candidate는
+다음 사용 시 다시 평가됩니다.
+
 승격 시 source에서 확인한 근거를 최대 2,000자만 새 Markdown 페이지에 저장하고,
 source 문서 ID, 사용 횟수, 승격 시각, `memory_kind: adaptive`를 함께 기록합니다.
 이는 반복해서 유용했던 맥락이지 내용이 참이라는 자동 판정이 아닙니다. 원래의

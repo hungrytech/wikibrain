@@ -321,9 +321,25 @@ captured_at: {_yaml_string(timestamp)}
 """
         target_path = self.config.vault_path / relative
         previous_content = (
-            target_path.read_text(encoding="utf-8") if target_path.exists() else None
+            target_path.read_text(encoding="utf-8")
+            if memory_kind != "adaptive" and target_path.exists()
+            else None
         )
-        path = self._write(relative, content)
+        adaptive_previous_content: str | None = None
+        path = target_path if memory_kind == "adaptive" else self._write(relative, content)
+
+        def publish_adaptive() -> None:
+            nonlocal adaptive_previous_content
+            adaptive_previous_content = (
+                path.read_text(encoding="utf-8") if path.exists() else None
+            )
+            self._write(relative, content)
+
+        def rollback_adaptive_publish() -> None:
+            if adaptive_previous_content is None:
+                path.unlink(missing_ok=True)
+            else:
+                atomic_write_text(path, adaptive_previous_content)
 
         def restore_failed_write() -> None:
             current = self.store.document(document_id)
@@ -350,9 +366,15 @@ captured_at: {_yaml_string(timestamp)}
                     **(registration_metadata or {}),
                 },
                 relations=relations,
+                insert_only=memory_kind == "adaptive",
+                publish=publish_adaptive if memory_kind == "adaptive" else None,
+                rollback_publish=(
+                    rollback_adaptive_publish if memory_kind == "adaptive" else None
+                ),
             )
         except Exception:
-            restore_failed_write()
+            if memory_kind != "adaptive":
+                restore_failed_write()
             raise
         if not registered:
             restore_failed_write()
@@ -391,13 +413,31 @@ captured_at: {_yaml_string(timestamp)}
         )
         title = f"Retained context: {title_line[:100]}"
         promoted_at = datetime.now(UTC).isoformat(timespec="milliseconds")
+        promotion_score = float(usage.get("promotion_score", 0.0))
+        promotion_score_threshold = float(
+            usage.get("promotion_score_threshold", 0.0)
+        )
+        raw_components = usage.get("promotion_score_components", {})
+        score_components = (
+            {str(key): float(value) for key, value in raw_components.items()}
+            if isinstance(raw_components, Mapping)
+            else {}
+        )
+        component_lines = "".join(
+            f"  - {name.replace('_', ' ').title()}: {value:.3f}\n"
+            for name, value in score_components.items()
+        )
         body = (
             bounded
             + "\n\n## Automatic retention evidence\n\n"
             + f"- Distinct sessions: {int(usage.get('distinct_sessions', 0))}\n"
+            + f"- Distinct providers: {int(usage.get('distinct_providers', 0))}\n"
             + f"- Distinct days: {int(usage.get('distinct_days', 0))}\n"
             + f"- Search sessions: {int(usage.get('search_sessions', 0))}\n"
             + f"- Context injections: {int(usage.get('context_injections', 0))}\n"
+            + f"- Promotion score: {promotion_score:.3f} / "
+            + f"{promotion_score_threshold:.3f}\n"
+            + ("- Score components:\n" + component_lines if component_lines else "")
             + f"- Source document: `{source_document_id}`\n"
         )
         created_id, path = self.remember(
@@ -418,8 +458,12 @@ captured_at: {_yaml_string(timestamp)}
                 "adaptive_source_document_id": source_document_id,
                 "promoted_at": promoted_at,
                 "last_used_at": str(usage.get("last_used_at") or promoted_at),
+                "promotion_score": promotion_score,
+                "promotion_score_threshold": promotion_score_threshold,
+                "promotion_score_components": score_components,
                 "promotion_reason": {
                     "distinct_sessions": int(usage.get("distinct_sessions", 0)),
+                    "distinct_providers": int(usage.get("distinct_providers", 0)),
                     "distinct_days": int(usage.get("distinct_days", 0)),
                     "search_sessions": int(usage.get("search_sessions", 0)),
                     "context_injections": int(

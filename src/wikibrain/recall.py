@@ -77,6 +77,7 @@ def _render_record(
     captured_at: str,
     evidence: str,
     relations: list[tuple[str, str]] | None = None,
+    retrieval_source: str | None = None,
     truncated: bool = False,
 ) -> str:
     line_attribute = f' line="{line}"' if line is not None else ""
@@ -241,6 +242,7 @@ class RecallService:
                             snippet=hit.snippet,
                             query=query,
                         ),
+                        "retrieval_source": "search",
                         "relations": [
                             (
                                 str(relation["relation_type"]),
@@ -298,6 +300,7 @@ class RecallService:
                         "line": None,
                         "captured_at": str(related_row["created_at"]),
                         "evidence": snippet,
+                        "retrieval_source": "related",
                         "relations": [
                             (
                                 str(relation["relation_type"]),
@@ -339,6 +342,7 @@ class RecallService:
                         "line": None,
                         "captured_at": str(row["created_at"]),
                         "evidence": snippet,
+                        "retrieval_source": "recent",
                         "relations": [
                             (
                                 str(relation["relation_type"]),
@@ -416,12 +420,13 @@ class RecallService:
                         str(record["document_id"]),
                         consumer_provider=provider,
                         consumer_session_id=session_id,
-                        searched=bool(query),
+                        searched=record.get("retrieval_source") == "search",
                         injected=True,
                         window_days=self.config.adaptive_memory_window_days,
                         min_sessions=self.config.adaptive_memory_min_sessions,
                         min_days=self.config.adaptive_memory_min_days,
                         min_injections=self.config.adaptive_memory_min_injections,
+                        min_score=self.config.adaptive_memory_min_score,
                     )
                     if usage["eligible"]:
                         curator = curator or Curator(

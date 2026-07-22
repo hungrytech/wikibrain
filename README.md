@@ -140,6 +140,20 @@ not count toward their own promotion, superseded evidence is ineligible, and
 workspace counters never mix. If a promoted source is superseded later, its
 adaptive derivative is hidden from recall too.
 
+Meeting those hard gates is necessary but not sufficient. WikiBrain also requires
+an explainable promotion score of at least `0.65`. The score combines session
+diversity (30%), persistence across UTC days (25%), repeated final-context
+injection (25%), the share of consumer sessions backed by an explicit query
+(10%), and consumer-provider diversity (10%). Repetition components saturate at
+twice their configured hard minimum, and provider diversity saturates at two
+providers. Non-injected search hits contribute nothing. The score, threshold,
+and weighted components are written to the promoted page and document metadata;
+`adaptive_memory_min_score` configures the threshold from 0 to 1. Only direct
+search hits count as query-backed; related and recent-fallback records do not.
+The default is a deterministic initial policy, not a learned probability. Existing
+config files adopt `0.65`; set the threshold to `0` to retain the former hard-gate-only
+behavior. Pending candidates are reconsidered on their next use.
+
 Promotion writes at most 2,000 characters of the source-verified evidence to a
 new Markdown page with the source document ID, usage counts, promotion time,
 and `memory_kind: adaptive`. It is retained context, not a declaration that the

@@ -289,7 +289,7 @@ def command_setup(args: argparse.Namespace, home: Path) -> int:
 def command_hooks(args: argparse.Namespace, home: Path) -> int:
     paths = _path_overrides(args)
     if args.hooks_command == "status":
-        _emit(hook_status(paths), args.json)
+        _emit(hook_status(paths, clients=args.clients), args.json)
         return 0
     config = _load(home)
     results = uninstall_hooks(
@@ -407,7 +407,7 @@ def command_status(args: argparse.Namespace, home: Path) -> int:
             },
             "counts": store.counts(),
             "hooks": configured_hook_status(config),
-            "skills": skill_status(["claude", "codex"]),
+            "skills": skill_status(["claude", "codex", "grok"]),
             "archive_security": (
                 "redacted plaintext, mode 0600; filesystem encryption is recommended"
             ),
@@ -857,6 +857,9 @@ def build_parser() -> argparse.ArgumentParser:
     hooks = commands.add_parser("hooks", help="Inspect or uninstall hooks")
     hooks_commands = hooks.add_subparsers(dest="hooks_command", required=True)
     hooks_status = hooks_commands.add_parser("status")
+    hooks_status.add_argument(
+        "--clients", type=_clients, default=["claude", "codex"]
+    )
     hooks_status.add_argument("--claude-settings")
     hooks_status.add_argument("--codex-hooks")
     hooks_status.add_argument("--grok-hooks")

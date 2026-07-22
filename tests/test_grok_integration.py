@@ -1,18 +1,21 @@
 from __future__ import annotations
 
+import argparse
+import io
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from wikibrain.cli import build_parser
+from wikibrain.cli import build_parser, command_hooks, command_status
 from wikibrain.config import BrainConfig
 from wikibrain.curation import Curator
 from wikibrain.hook_adapters import normalize_hook
 from wikibrain.hooks import _effective_provider, process_hook
 from wikibrain.installer import EVENTS, _is_owned_handler, install_hooks
-from wikibrain.skill_installer import default_skill_targets
+from wikibrain.skill_installer import default_skill_targets, install_skills
 from wikibrain.storage import BrainStore
 from wikibrain.wikimap_adapter import WikimapAdapter
 
@@ -226,6 +229,56 @@ class GrokIntegrationTests(unittest.TestCase):
         self.assertEqual(
             targets["grok"], Path("/tmp/custom-grok-home/skills/wikibrain")
         )
+
+    def test_status_reports_an_installed_native_grok_skill(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = BrainConfig.create(root / "brain", root / "vault", [root])
+            BrainStore(config.database_path).initialize()
+            grok_home = root / ".grok"
+            with patch.dict("os.environ", {"GROK_HOME": str(grok_home)}):
+                install_skills(["grok"])
+                output = io.StringIO()
+                with (
+                    patch.object(WikimapAdapter, "version", return_value="1.1.0"),
+                    redirect_stdout(output),
+                ):
+                    command_status(argparse.Namespace(json=True), config.home_path)
+
+            skills = {
+                item["client"]: item
+                for item in json.loads(output.getvalue())["skills"]
+            }
+            self.assertIn("grok", skills)
+            self.assertTrue(skills["grok"]["installed"])
+
+    def test_hooks_status_respects_selected_clients(self) -> None:
+        parser = build_parser()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            paths = [
+                "--claude-settings",
+                str(root / "claude.json"),
+                "--codex-hooks",
+                str(root / "codex.json"),
+                "--grok-hooks",
+                str(root / "grok.json"),
+                "--json",
+            ]
+            scenarios = (
+                (["hooks", "status", *paths], {"claude", "codex"}),
+                (["hooks", "status", "--clients", "grok", *paths], {"grok"}),
+            )
+            for arguments, expected in scenarios:
+                with self.subTest(arguments=arguments):
+                    args = parser.parse_args(arguments)
+                    output = io.StringIO()
+                    with redirect_stdout(output):
+                        command_hooks(args, root / "brain")
+                    clients = {
+                        item["client"] for item in json.loads(output.getvalue())
+                    }
+                    self.assertEqual(clients, expected)
 
     def test_cli_accepts_grok_client_and_provider(self) -> None:
         parser = build_parser()

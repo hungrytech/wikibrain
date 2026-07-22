@@ -20,12 +20,12 @@
     "forbidden_atoms": 4
   },
   "provenance": {
-    "generated_at": "2026-07-22T16:33:14+00:00",
+    "generated_at": "2026-07-22T16:33:51+00:00",
     "corpus_version": "second-brain-corpus-v1",
     "runner_sha256": "666510b248680357cebe9d70d42f07a7d0619522658fbb0810989aec449ec2aa",
     "source_manifest_sha256": "a4f58b6f522e22515ffc20cf75aabd39bc6dcb52759c717fe635dbdce8befcab",
-    "git_commit": "dac2913307d21b9512c0dabc277bb77e34bb54c5",
-    "git_dirty": true,
+    "git_commit": "285eb6525847330c3eac178dba9d1bce3c39790e",
+    "git_dirty": false,
     "reproduction_command": "uv run python -m benchmarks.second_brain --wikimap wikimap --format json --output benchmarks/results/second-brain-v1.json"
   },
   "cases": [

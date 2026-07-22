@@ -6,6 +6,23 @@ The project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-07-22
+
+### Security
+
+- Bound official release-policy retrieval by a monotonic 2.5-second total deadline
+  in a killable worker process, in addition to the socket timeout and response-size
+  limit; deadline expiry terminates and joins the worker so slow-drip responses
+  cannot leave commands, hooks, threads, or sockets behind.
+- Validate cached policy files before reading them: POSIX caches must be non-symlink
+  regular files owned by the current user and not group/other writable; Windows
+  opens the cache with a non-following kernel handle and validates the same handle's
+  regular-file/reparse state, final user-profile containment, owner SID, and DACL.
+- Reject policy timestamps before the schema-v1 epoch or more than five minutes in
+  the future, and reject rollback below the last accepted `updated_at`. Cache schema
+  v2 preserves that rollback floor across negative-cache entries and system-clock
+  regressions while reading and migrating existing schema-v1 caches.
+
 ## [0.1.7] - 2026-07-22
 
 ### Added

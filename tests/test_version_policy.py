@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 import unittest
 from argparse import Namespace
 from contextlib import redirect_stderr
@@ -10,15 +11,20 @@ from datetime import UTC, datetime, timedelta
 from http.client import IncompleteRead
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from wikibrain.cli import _enforce_minimum_supported_version, main
 from wikibrain.version_policy import (
+    CACHE_NAME,
     CACHE_TTL,
     MAX_CACHE_BYTES,
     POLICY_URL,
     PolicyDecision,
+    _download_remote_policy,
     _fetch_remote_policy,
+    _open_trusted_cache,
+    _windows_cache_path_is_private,
     check_release_policy,
     parse_release_policy,
 )
@@ -28,13 +34,18 @@ ROOT = Path(__file__).resolve().parents[1]
 NOW = datetime(2026, 7, 22, 12, 0, tzinfo=UTC)
 
 
-def _policy(*, latest: str = "0.1.7", minimum: str = "0.1.6") -> bytes:
+def _policy(
+    *,
+    latest: str = "0.1.7",
+    minimum: str = "0.1.6",
+    updated_at: str = "2026-07-22T12:00:00Z",
+) -> bytes:
     return json.dumps(
         {
             "schema_version": 1,
             "latest_version": latest,
             "minimum_supported_version": minimum,
-            "updated_at": "2026-07-22T12:00:00Z",
+            "updated_at": updated_at,
         }
     ).encode()
 
@@ -55,6 +66,11 @@ class _Response:
 
     def read(self, limit: int) -> bytes:
         return self.payload[:limit]
+
+
+def _blocking_policy_worker() -> bytes:
+    while True:
+        time.sleep(1)
 
 
 class VersionPolicyTests(unittest.TestCase):
@@ -115,7 +131,7 @@ class VersionPolicyTests(unittest.TestCase):
             )
 
         with patch("wikibrain.version_policy.urlopen", side_effect=open_trusted):
-            self.assertEqual(_fetch_remote_policy(), _policy())
+            self.assertEqual(_download_remote_policy(), _policy())
 
         request, timeout = requests[0]
         self.assertIsNone(request.data)
@@ -126,7 +142,7 @@ class VersionPolicyTests(unittest.TestCase):
             return_value=_Response(_policy(), "https://example.com/policy.json"),
         ):
             with self.assertRaisesRegex(ValueError, "official policy URL"):
-                _fetch_remote_policy()
+                _download_remote_policy()
 
         for redirected_url in (
             "https://raw.githubusercontent.com/attacker/repo/main/release-policy.json",
@@ -138,7 +154,7 @@ class VersionPolicyTests(unittest.TestCase):
                     return_value=_Response(_policy(), redirected_url),
                 ):
                     with self.assertRaisesRegex(ValueError, "official policy URL"):
-                        _fetch_remote_policy()
+                        _download_remote_policy()
 
         self.assertEqual(POLICY_URL, requests[0][0].full_url)
 
@@ -162,7 +178,12 @@ class VersionPolicyTests(unittest.TestCase):
                 "wikibrain.version_policy.urlopen",
                 return_value=TruncatedResponse(),
             ):
-                decision = check_release_policy(home, "0.1.6", now=NOW)
+                decision = check_release_policy(
+                    home,
+                    "0.1.6",
+                    now=NOW,
+                    fetcher=_download_remote_policy,
+                )
             with patch(
                 "wikibrain.version_policy.urlopen",
                 side_effect=AssertionError("negative cache must avoid another request"),
@@ -177,6 +198,44 @@ class VersionPolicyTests(unittest.TestCase):
         self.assertEqual(decision.source, "remote-error")
         self.assertEqual(cached.state, "unavailable")
         self.assertEqual(cached.source, "cache")
+
+    def test_remote_fetch_deadline_terminates_its_worker(self) -> None:
+        started = time.monotonic()
+        with patch("wikibrain.version_policy.TOTAL_FETCH_DEADLINE", 0.05):
+            with self.assertRaises(TimeoutError):
+                _fetch_remote_policy(worker=_blocking_policy_worker)
+        self.assertLess(time.monotonic() - started, 0.5)
+        self.assertFalse(
+            any(
+                child.name == "wikibrain-release-policy-fetch"
+                for child in __import__("multiprocessing").active_children()
+            )
+        )
+
+    def test_remote_fetch_worker_start_failure_is_an_io_failure(self) -> None:
+        class Endpoint:
+            def close(self) -> None:
+                pass
+
+        class FakeProcess:
+            def start(self) -> None:
+                raise RuntimeError("spawn disabled")
+
+            def close(self) -> None:
+                pass
+
+        class Context:
+            def Pipe(self, *, duplex: bool) -> tuple[Endpoint, Endpoint]:
+                self.duplex = duplex
+                return Endpoint(), Endpoint()
+
+            def Process(self, **kwargs: object) -> FakeProcess:
+                self.process_kwargs = kwargs
+                return FakeProcess()
+
+        with patch("wikibrain.version_policy.multiprocessing.get_context", return_value=Context()):
+            with self.assertRaisesRegex(OSError, "could not start"):
+                _fetch_remote_policy()
 
     def test_schema_rejects_bool_float_and_duplicate_keys(self) -> None:
         valid_fields = (
@@ -286,6 +345,223 @@ class VersionPolicyTests(unittest.TestCase):
 
         self.assertFalse(decision.upgrade_required)
         self.assertEqual(decision.source, "remote")
+
+    def test_cache_rejects_mismatched_current_and_last_accepted_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            home.joinpath(CACHE_NAME).write_text(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "checked_at": NOW.isoformat().replace("+00:00", "Z"),
+                        "policy": json.loads(_policy()),
+                        "last_accepted_policy": json.loads(
+                            _policy(latest="9.0.0", minimum="9.0.0")
+                        ),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            decision = check_release_policy(
+                home,
+                "0.1.7",
+                now=NOW,
+                fetcher=lambda: _policy(),
+            )
+
+        self.assertEqual(decision.state, "supported")
+        self.assertEqual(decision.source, "remote")
+
+    @unittest.skipIf(os.name == "nt", "POSIX ownership and mode contract")
+    def test_cache_rejects_symlinks_and_group_or_other_writable_files(self) -> None:
+        poisoned = {
+            "schema_version": 1,
+            "checked_at": NOW.isoformat().replace("+00:00", "Z"),
+            "policy": json.loads(_policy(latest="9.0.0", minimum="9.0.0")),
+        }
+        for attack in ("symlink", "writable"):
+            with self.subTest(attack=attack), tempfile.TemporaryDirectory() as temporary:
+                home = Path(temporary)
+                cache = home / "release-policy-cache.json"
+                if attack == "symlink":
+                    target = home / "attacker-controlled.json"
+                    target.write_text(json.dumps(poisoned), encoding="utf-8")
+                    cache.symlink_to(target)
+                else:
+                    cache.write_text(json.dumps(poisoned), encoding="utf-8")
+                    cache.chmod(0o666)
+
+                decision = check_release_policy(
+                    home,
+                    "0.1.7",
+                    now=NOW,
+                    fetcher=lambda: _policy(latest="0.1.7", minimum="0.1.7"),
+                )
+
+                self.assertEqual(decision.state, "supported")
+                self.assertEqual(decision.source, "remote")
+
+    def test_windows_cache_policy_requires_a_regular_file_in_user_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            profile = root / "profile"
+            profile.mkdir()
+            private_cache = profile / ".wikibrain" / "release-policy-cache.json"
+            private_cache.parent.mkdir()
+            private_cache.write_text("{}", encoding="utf-8")
+            shared_cache = root / "shared" / "release-policy-cache.json"
+            shared_cache.parent.mkdir()
+            shared_cache.write_text("{}", encoding="utf-8")
+
+            self.assertTrue(
+                _windows_cache_path_is_private(private_cache, profile)
+            )
+            self.assertFalse(
+                _windows_cache_path_is_private(shared_cache, profile)
+            )
+            if os.name != "nt":
+                symlink_cache = profile / ".wikibrain" / "linked-cache.json"
+                symlink_cache.symlink_to(shared_cache)
+                self.assertFalse(
+                    _windows_cache_path_is_private(symlink_cache, profile)
+                )
+
+    @unittest.skipUnless(os.name == "nt", "Windows handle and DACL contract")
+    def test_windows_handle_validation_accepts_a_private_user_cache(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temporary:
+            cache = Path(temporary) / CACHE_NAME
+            cache.write_bytes(b"trusted")
+            with _open_trusted_cache(cache) as handle:
+                self.assertEqual(handle.read(), b"trusted")
+
+    @unittest.skipIf(os.name == "nt", "POSIX ownership contract")
+    def test_cache_rejects_a_foreign_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            cache = Path(temporary) / CACHE_NAME
+            cache.write_text("{}", encoding="utf-8")
+            metadata = cache.stat()
+            foreign_metadata = SimpleNamespace(
+                st_mode=metadata.st_mode,
+                st_uid=os.getuid() + 1,
+            )
+            with patch(
+                "wikibrain.version_policy.os.fstat",
+                return_value=foreign_metadata,
+            ):
+                with self.assertRaisesRegex(OSError, "not owned"):
+                    _open_trusted_cache(cache)
+
+    def test_policy_rejects_pre_schema_epoch_and_excessive_future_timestamp(self) -> None:
+        for updated_at in (
+            "1970-01-01T00:00:00Z",
+            "2026-07-22T12:05:01Z",
+            "9999-01-01T00:00:00Z",
+        ):
+            with self.subTest(updated_at=updated_at):
+                with self.assertRaises(ValueError):
+                    parse_release_policy(_policy(updated_at=updated_at), now=NOW)
+
+    def test_remote_policy_rollback_is_rejected_against_stale_accepted_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            accepted = check_release_policy(
+                home,
+                "0.1.7",
+                now=NOW,
+                fetcher=lambda: _policy(
+                    latest="0.1.7",
+                    minimum="0.1.7",
+                    updated_at="2026-07-22T12:00:00Z",
+                ),
+            )
+            rollback = check_release_policy(
+                home,
+                "0.1.7",
+                now=NOW + CACHE_TTL + timedelta(seconds=1),
+                fetcher=lambda: _policy(
+                    latest="9.0.0",
+                    minimum="9.0.0",
+                    updated_at="2026-07-22T11:59:59Z",
+                ),
+            )
+            negatively_cached = check_release_policy(
+                home,
+                "0.1.7",
+                now=NOW + CACHE_TTL + timedelta(minutes=1),
+                fetcher=lambda: self.fail("rollback failure must be negatively cached"),
+            )
+            repeated_rollback = check_release_policy(
+                home,
+                "0.1.7",
+                now=NOW + (CACHE_TTL * 2) + timedelta(seconds=2),
+                fetcher=lambda: _policy(
+                    latest="10.0.0",
+                    minimum="10.0.0",
+                    updated_at="2026-07-22T11:00:00Z",
+                ),
+            )
+
+        self.assertEqual(accepted.state, "supported")
+        self.assertEqual(rollback.state, "unavailable")
+        self.assertEqual(rollback.source, "remote-error")
+        self.assertEqual(negatively_cached.source, "cache")
+        self.assertEqual(repeated_rollback.state, "unavailable")
+        self.assertEqual(repeated_rollback.source, "remote-error")
+
+    def test_clock_regression_does_not_delete_the_rollback_floor(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            future_now = NOW + timedelta(days=1)
+            accepted = check_release_policy(
+                home,
+                "0.1.7",
+                now=future_now,
+                fetcher=lambda: _policy(
+                    updated_at="2026-07-23T12:00:00Z",
+                ),
+            )
+            offline_after_clock_rollback = check_release_policy(
+                home,
+                "0.1.7",
+                now=NOW,
+                fetcher=lambda: (_ for _ in ()).throw(OSError("offline")),
+            )
+            rejected_old_policy = check_release_policy(
+                home,
+                "0.1.7",
+                now=future_now + CACHE_TTL + timedelta(seconds=1),
+                fetcher=lambda: _policy(
+                    latest="9.0.0",
+                    minimum="9.0.0",
+                    updated_at="2026-07-22T12:00:00Z",
+                ),
+            )
+
+        self.assertEqual(accepted.state, "supported")
+        self.assertEqual(offline_after_clock_rollback.state, "unavailable")
+        self.assertEqual(rejected_old_policy.state, "unavailable")
+        self.assertEqual(rejected_old_policy.source, "remote-error")
+
+    def test_unexpected_runtime_fetch_failure_fails_open(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            decision = check_release_policy(
+                Path(temporary),
+                "0.1.7",
+                now=NOW,
+                fetcher=lambda: (_ for _ in ()).throw(RuntimeError("no workers")),
+            )
+        self.assertEqual(decision.state, "unavailable")
+        self.assertEqual(decision.source, "remote-error")
+
+    def test_naive_now_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(ValueError, "timezone-aware"):
+                check_release_policy(
+                    Path(temporary),
+                    "0.1.7",
+                    now=datetime(2026, 7, 22, 12, 0),
+                    fetcher=_policy,
+                )
 
     def test_remote_policy_blocks_a_version_below_the_minimum_and_is_cached(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

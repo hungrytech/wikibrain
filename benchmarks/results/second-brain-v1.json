@@ -6,8 +6,8 @@
     "handoff_check": "session-start-recent-context"
   },
   "engine": "wikimap 1.1.0",
-  "python": "3.11.15",
-  "platform": "macOS-26.5.2-arm64-arm-64bit",
+  "python": "3.13.11",
+  "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
   "corpus_documents": 8,
   "checks_passed": 8,
   "checks_total": 8,
@@ -20,12 +20,12 @@
     "forbidden_atoms": 4
   },
   "provenance": {
-    "generated_at": "2026-07-22T13:51:40+00:00",
+    "generated_at": "2026-07-22T15:12:47+00:00",
     "corpus_version": "second-brain-corpus-v1",
     "runner_sha256": "666510b248680357cebe9d70d42f07a7d0619522658fbb0810989aec449ec2aa",
-    "source_manifest_sha256": "f9fc90c63885c104a5dd439967a5e2bc91455720364d4957d9a26b542843e4db",
-    "git_commit": "2475e281a5dce0b3320af0e09b3561b7ad02e643",
-    "git_dirty": false,
+    "source_manifest_sha256": "3a7d9fc4d91992562008f4270522be7189bf42520e1bb15578b72f497887674b",
+    "git_commit": "3b9f7c59872f82a286675a982a2468ce41f229cc",
+    "git_dirty": true,
     "reproduction_command": "uv run python -m benchmarks.second_brain --wikimap wikimap --format json --output benchmarks/results/second-brain-v1.json"
   },
   "cases": [

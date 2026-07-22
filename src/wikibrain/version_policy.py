@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import multiprocessing
+import os
 import re
+import stat
+import time
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from http.client import HTTPException
 from pathlib import Path
-from typing import Callable
+from typing import BinaryIO, Callable
 from urllib.request import Request, urlopen
 
 from .config import atomic_write_text
@@ -20,6 +24,10 @@ CACHE_TTL = timedelta(hours=24)
 CACHE_NAME = "release-policy-cache.json"
 MAX_POLICY_BYTES = 64 * 1024
 MAX_CACHE_BYTES = 128 * 1024
+SOCKET_TIMEOUT = 2.0
+TOTAL_FETCH_DEADLINE = 2.5
+MAX_FUTURE_SKEW = timedelta(minutes=5)
+POLICY_SCHEMA_EPOCH = datetime(2026, 7, 22, tzinfo=UTC)
 _SEMVER = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 
 
@@ -47,6 +55,13 @@ class PolicyDecision:
     @property
     def upgrade_required(self) -> bool:
         return self.state == "upgrade-required"
+
+
+@dataclass(frozen=True, slots=True)
+class _CacheEntry:
+    checked_at: datetime
+    policy: ReleasePolicy | None
+    last_accepted_policy: ReleasePolicy | None
 
 
 def _version_tuple(version: str) -> tuple[int, int, int]:
@@ -87,7 +102,12 @@ def _decode_json(payload: bytes) -> object:
         raise ValueError("invalid release policy JSON") from exc
 
 
-def parse_release_policy(payload: bytes) -> ReleasePolicy:
+def parse_release_policy(
+    payload: bytes,
+    *,
+    now: datetime | None = None,
+    allow_future: bool = False,
+) -> ReleasePolicy:
     if len(payload) > MAX_POLICY_BYTES:
         raise ValueError("release policy exceeds the size limit")
     decoded = _decode_json(payload)
@@ -110,7 +130,15 @@ def parse_release_policy(payload: bytes) -> ReleasePolicy:
     if _version_tuple(latest) < _version_tuple(minimum):
         raise ValueError("latest_version cannot precede minimum_supported_version")
     updated_at = decoded["updated_at"]
-    _parse_timestamp(updated_at)
+    policy_time = _parse_timestamp(updated_at)
+    reference_time = now or datetime.now(UTC)
+    if reference_time.tzinfo is None or reference_time.utcoffset() is None:
+        raise ValueError("release policy time must be timezone-aware")
+    reference_time = reference_time.astimezone(UTC)
+    if policy_time < POLICY_SCHEMA_EPOCH:
+        raise ValueError("release policy predates schema version 1")
+    if not allow_future and policy_time > reference_time + MAX_FUTURE_SKEW:
+        raise ValueError("release policy timestamp is too far in the future")
     return ReleasePolicy(
         schema_version=1,
         latest_version=latest,
@@ -119,7 +147,7 @@ def parse_release_policy(payload: bytes) -> ReleasePolicy:
     )
 
 
-def _fetch_remote_policy() -> bytes:
+def _download_remote_policy() -> bytes:
     request = Request(
         POLICY_URL,
         headers={
@@ -127,13 +155,84 @@ def _fetch_remote_policy() -> bytes:
             "User-Agent": "wikibrain-version-policy",
         },
     )
-    with urlopen(request, timeout=2.0) as response:
+    with urlopen(request, timeout=SOCKET_TIMEOUT) as response:
         if response.geturl() != POLICY_URL:
             raise ValueError("release policy response is not the official policy URL")
         payload = response.read(MAX_POLICY_BYTES + 1)
     if len(payload) > MAX_POLICY_BYTES:
         raise ValueError("release policy exceeds the size limit")
     return payload
+
+
+def _policy_fetch_process(
+    connection: object,
+    worker: Callable[[], bytes],
+) -> None:
+    try:
+        payload = worker()
+        connection.send_bytes(b"\x01" + payload)  # type: ignore[attr-defined]
+    except BaseException as exc:
+        error = f"{type(exc).__name__}: {exc}".encode("utf-8", errors="replace")
+        try:
+            connection.send_bytes(b"\x00" + error[:4096])  # type: ignore[attr-defined]
+        except (BrokenPipeError, EOFError, OSError):
+            pass
+    finally:
+        connection.close()  # type: ignore[attr-defined]
+
+
+def _stop_fetch_process(process: multiprocessing.Process) -> None:
+    if process.is_alive():
+        process.terminate()
+        process.join(0.2)
+    if process.is_alive() and hasattr(process, "kill"):
+        process.kill()
+        process.join(0.2)
+    if process.is_alive():
+        raise RuntimeError("release policy worker could not be stopped")
+
+
+def _fetch_remote_policy(
+    *,
+    worker: Callable[[], bytes] = _download_remote_policy,
+) -> bytes:
+    context = multiprocessing.get_context("spawn")
+    receiver, sender = context.Pipe(duplex=False)
+    process = context.Process(
+        target=_policy_fetch_process,
+        args=(sender, worker),
+        name="wikibrain-release-policy-fetch",
+        daemon=True,
+    )
+    started = time.monotonic()
+    started_process = False
+    try:
+        try:
+            process.start()
+            started_process = True
+        except Exception as exc:
+            raise OSError("could not start release policy worker") from exc
+        finally:
+            sender.close()
+
+        remaining = TOTAL_FETCH_DEADLINE - (time.monotonic() - started)
+        if remaining <= 0 or not receiver.poll(remaining):
+            raise TimeoutError("release policy request exceeded its total deadline")
+        try:
+            message = receiver.recv_bytes(MAX_POLICY_BYTES + 4097)
+        except (EOFError, OSError) as exc:
+            raise OSError("release policy worker exited without a result") from exc
+        if not message or message[0] != 1:
+            detail = message[1:].decode("utf-8", errors="replace") if message else ""
+            raise OSError(f"release policy request failed: {detail}")
+        return message[1:]
+    finally:
+        receiver.close()
+        if started_process:
+            remaining = TOTAL_FETCH_DEADLINE - (time.monotonic() - started)
+            process.join(max(0.0, remaining))
+            _stop_fetch_process(process)
+        process.close()
 
 
 def _decision(
@@ -165,44 +264,103 @@ def _unavailable(current_version: str, *, source: str) -> PolicyDecision:
     )
 
 
-def _read_fresh_cache(
-    path: Path,
-    current_version: str,
-    now: datetime,
-) -> PolicyDecision | None:
+def _windows_cache_path_is_private(path: Path, user_home: Path) -> bool:
     try:
-        with path.open("rb") as cache_file:
+        path.resolve(strict=True).relative_to(user_home.resolve(strict=True))
+    except (OSError, ValueError):
+        return False
+    return not path.is_symlink() and path.is_file()
+
+
+def _open_trusted_cache(path: Path) -> BinaryIO:
+    if os.name == "nt":
+        from wikibrain.windows_cache import open_trusted_windows_cache
+
+        return open_trusted_windows_cache(path, Path.home())
+
+    flags = os.O_RDONLY
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise OSError("release policy cache is not a regular file")
+        if metadata.st_uid != os.getuid():
+            raise OSError("release policy cache is not owned by the current user")
+        if metadata.st_mode & 0o022:
+            raise OSError("release policy cache is writable by group or others")
+        return os.fdopen(descriptor, "rb")
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
+def _read_cache(path: Path, now: datetime) -> _CacheEntry | None:
+    try:
+        with _open_trusted_cache(path) as cache_file:
             cache_payload = cache_file.read(MAX_CACHE_BYTES + 1)
         if len(cache_payload) > MAX_CACHE_BYTES:
             raise ValueError("release policy cache exceeds the size limit")
         cached = _decode_json(cache_payload)
         if not isinstance(cached, dict):
             raise ValueError("release policy cache must be a JSON object")
-        if set(cached) != {"schema_version", "checked_at", "policy"}:
-            raise ValueError("release policy cache fields do not match schema version 1")
-        if (
-            type(cached.get("schema_version")) is not int
-            or cached["schema_version"] != 1
-        ):
+        schema_version = cached.get("schema_version")
+        if type(schema_version) is not int or schema_version not in {1, 2}:
             raise ValueError("unsupported release policy cache schema")
+        expected = (
+            {"schema_version", "checked_at", "policy"}
+            if schema_version == 1
+            else {
+                "schema_version",
+                "checked_at",
+                "policy",
+                "last_accepted_policy",
+            }
+        )
+        if set(cached) != expected:
+            raise ValueError("release policy cache fields do not match its schema")
         checked_at = _parse_timestamp(cached["checked_at"])
-        age = now - checked_at
-        if age < timedelta(0) or age >= CACHE_TTL:
-            return None
-        payload = cached.get("policy")
-        if payload is None:
-            return _unavailable(current_version, source="cache")
-        policy = parse_release_policy(json.dumps(payload).encode("utf-8"))
-        return _decision(policy, current_version, source="cache")
+
+        def decode_policy(value: object) -> ReleasePolicy | None:
+            if value is None:
+                return None
+            return parse_release_policy(
+                json.dumps(value).encode("utf-8"),
+                now=now,
+                allow_future=True,
+            )
+
+        policy = decode_policy(cached.get("policy"))
+        last_accepted = (
+            decode_policy(cached.get("last_accepted_policy"))
+            if schema_version == 2
+            else policy
+        )
+        if policy is not None and policy != last_accepted:
+            raise ValueError("cached policy must match last accepted policy")
+        return _CacheEntry(
+            checked_at=checked_at,
+            policy=policy,
+            last_accepted_policy=last_accepted,
+        )
     except (KeyError, MemoryError, OSError, RecursionError, TypeError, ValueError):
         return None
 
 
-def _write_cache(path: Path, now: datetime, policy: ReleasePolicy | None) -> None:
+def _write_cache(
+    path: Path,
+    now: datetime,
+    policy: ReleasePolicy | None,
+    last_accepted_policy: ReleasePolicy | None,
+) -> None:
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "checked_at": now.astimezone(UTC).isoformat().replace("+00:00", "Z"),
         "policy": asdict(policy) if policy is not None else None,
+        "last_accepted_policy": (
+            asdict(last_accepted_policy) if last_accepted_policy is not None else None
+        ),
     }
     atomic_write_text(path, json.dumps(payload, indent=2) + "\n")
 
@@ -214,28 +372,46 @@ def check_release_policy(
     now: datetime | None = None,
     fetcher: Callable[[], bytes] | None = None,
 ) -> PolicyDecision:
-    checked_at = (now or datetime.now(UTC)).astimezone(UTC)
+    checked_at = now or datetime.now(UTC)
+    if checked_at.tzinfo is None or checked_at.utcoffset() is None:
+        raise ValueError("release policy check time must be timezone-aware")
+    checked_at = checked_at.astimezone(UTC)
     cache_path = home.expanduser().resolve() / CACHE_NAME
-    cached = _read_fresh_cache(cache_path, current_version, checked_at)
+    cached = _read_cache(cache_path, checked_at)
     if cached is not None:
-        return cached
+        age = checked_at - cached.checked_at
+        if timedelta(0) <= age < CACHE_TTL:
+            if cached.policy is None:
+                return _unavailable(current_version, source="cache")
+            return _decision(cached.policy, current_version, source="cache")
 
+    previous_policy = cached.last_accepted_policy if cached is not None else None
     try:
-        policy = parse_release_policy((fetcher or _fetch_remote_policy)())
+        policy = parse_release_policy(
+            (fetcher or _fetch_remote_policy)(),
+            now=checked_at,
+        )
+        if previous_policy is not None and _parse_timestamp(
+            policy.updated_at
+        ) < _parse_timestamp(previous_policy.updated_at):
+            raise ValueError("release policy rollback detected")
         decision = _decision(policy, current_version, source="remote")
+        last_accepted_policy = policy
     except (
         HTTPException,
         MemoryError,
         OSError,
         RecursionError,
+        RuntimeError,
         UnicodeError,
         ValueError,
     ):
         policy = None
+        last_accepted_policy = previous_policy
         decision = _unavailable(current_version, source="remote-error")
 
     try:
-        _write_cache(cache_path, checked_at, policy)
+        _write_cache(cache_path, checked_at, policy, last_accepted_policy)
     except (MemoryError, OSError, RecursionError):
         pass
     return decision

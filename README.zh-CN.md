@@ -311,7 +311,7 @@ brainctl setup && brainctl doctor
 如果是直接通过 `pipx` 安装，请这样升级：
 
 ```powershell
-pipx install --force "git+https://github.com/hungrytech/wikibrain.git@v0.1.7"
+pipx install --force "git+https://github.com/hungrytech/wikibrain.git@v0.1.8"
 brainctl setup
 brainctl doctor
 ```
@@ -346,7 +346,7 @@ Do not bypass Codex hook trust.
 ```powershell
 $installer = Join-Path $env:TEMP "install-wikibrain.ps1"
 Invoke-WebRequest `
-  "https://raw.githubusercontent.com/hungrytech/wikibrain/v0.1.7/scripts/install-windows.ps1" `
+  "https://raw.githubusercontent.com/hungrytech/wikibrain/v0.1.8/scripts/install-windows.ps1" `
   -OutFile $installer
 Get-Content $installer
 powershell.exe -NoProfile -ExecutionPolicy Bypass `

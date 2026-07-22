@@ -344,7 +344,7 @@ download and review it as described below. A direct `pipx` installation can be
 upgraded with:
 
 ```powershell
-pipx install --force "git+https://github.com/hungrytech/wikibrain.git@v0.1.7"
+pipx install --force "git+https://github.com/hungrytech/wikibrain.git@v0.1.8"
 brainctl setup
 brainctl doctor
 ```
@@ -384,7 +384,7 @@ manually, open PowerShell, download the versioned installer, review it, then run
 ```powershell
 $installer = Join-Path $env:TEMP "install-wikibrain.ps1"
 Invoke-WebRequest `
-  "https://raw.githubusercontent.com/hungrytech/wikibrain/v0.1.7/scripts/install-windows.ps1" `
+  "https://raw.githubusercontent.com/hungrytech/wikibrain/v0.1.8/scripts/install-windows.ps1" `
   -OutFile $installer
 Get-Content $installer
 powershell.exe -NoProfile -ExecutionPolicy Bypass `

@@ -1,20 +1,20 @@
 [build-system]
-requires = ["setuptools>=69"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "wikibrain-agent"
-version = "0.1.7"
+version = "0.1.8"
 description = "Local-first personal memory bridge for Claude Code, Codex, Grok Build, and Wikimap"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Taekmin Lee" }]
 keywords = ["second-brain", "wikimap", "claude-code", "codex", "grok-build", "hooks"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",
-  "License :: OSI Approved :: MIT License",
   "Operating System :: MacOS",
   "Operating System :: Microsoft :: Windows",
   "Operating System :: POSIX :: Linux",

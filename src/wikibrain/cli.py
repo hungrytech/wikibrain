@@ -7,7 +7,7 @@ import sys
 import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from . import __version__
 from .config import CONFIG_VERSION, BrainConfig, default_home, default_workspace
@@ -27,6 +27,7 @@ from .skill_installer import (
     uninstall_skills,
 )
 from .storage import BrainStore, stable_hash
+from .version_policy import PolicyDecision, check_release_policy
 from .wikimap_adapter import WikimapAdapter, WikimapError
 
 
@@ -975,11 +976,57 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+_POLICY_BYPASS_COMMANDS = {
+    "doctor",
+    "forget",
+    "hooks",
+    "pause",
+    "retention",
+    "setup",
+    "skills",
+    "status",
+}
+
+
+def _enforce_minimum_supported_version(
+    args: argparse.Namespace,
+    home: Path,
+    *,
+    checker: Callable[[Path, str], PolicyDecision] | None = None,
+    platform_name: str | None = None,
+) -> None:
+    if args.command_name in _POLICY_BYPASS_COMMANDS or (
+        args.command_name == "init" and getattr(args, "dry_run", False)
+    ):
+        return
+    decision = (checker or check_release_policy)(home, __version__)
+    if not decision.upgrade_required:
+        return
+    if (platform_name or sys.platform) == "win32":
+        version = decision.latest_version
+        upgrade = (
+            "download and review "
+            "`https://raw.githubusercontent.com/hungrytech/wikibrain/"
+            f"v{version}/scripts/install-windows.ps1`, then run the Native Windows "
+            "installer; pipx users can run "
+            f"`pipx install --force git+https://github.com/hungrytech/wikibrain.git@v{version}`"
+        )
+    else:
+        upgrade = "`brew update && brew upgrade hungrytech/tap/wikibrain`"
+    raise RuntimeError(
+        f"WikiBrain {decision.current_version} is no longer supported; "
+        f"the minimum supported version is {decision.minimum_supported_version} "
+        f"(latest: {decision.latest_version}). Upgrade with {upgrade}, then run "
+        "`brainctl setup && brainctl doctor`."
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     home = Path(args.home).expanduser().resolve() if args.home else default_home()
     try:
+        _enforce_minimum_supported_version(args, home)
         if args.command_name == "hook":
             return run_hook_command(args.provider, home=home)
         if args.command_name == "init":

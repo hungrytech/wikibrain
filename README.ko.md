@@ -315,6 +315,38 @@ uv run --locked python -m benchmarks.retrieval_quality \
 위 [시작하기](#getting-started)의 명령을 사용하세요. Apple Silicon macOS,
 Intel macOS, x86_64 Linux용 bottle을 제공합니다.
 
+### 최소 지원 버전
+
+버전 정책 검사가 포함된 WikiBrain 클라이언트는 HTTPS로
+[`release-policy.json`](release-policy.json)을 최대 24시간에 한 번 확인합니다.
+설치 버전이 `minimum_supported_version`보다 낮으면 수집, 회상, 쓰기, 재색인,
+resume, 실제 초기화를 중단하고 정확한 Homebrew 갱신 명령을 표시합니다.
+
+```bash
+brew update && brew upgrade hungrytech/tap/wikibrain
+brainctl setup && brainctl doctor
+```
+
+네이티브 Windows에서는 아래 설명처럼 버전이 고정된 설치 스크립트 URL을 표시하며,
+내려받은 내용을 검토한 뒤 실행해야 합니다. `pipx`로 직접 설치했다면 다음처럼
+갱신합니다.
+
+```powershell
+pipx install --force "git+https://github.com/hungrytech/wikibrain.git@v0.1.7"
+brainctl setup
+brainctl doctor
+```
+
+`--version`, `status`, `doctor`, `setup`, `pause`, `forget`, `retention`,
+hook/skill 확인과 제거는 계속 사용할 수 있습니다. 따라서 지원 종료 버전도 진단,
+개인정보 제어, 사용자 소유 데이터 접근을 막지 않습니다. 네트워크 장애, schema 오류,
+잘못된 정책은 fail-open하며 실패 결과를 24시간 negative cache합니다. 이 검사는
+workspace, prompt, memory 내용을 전송하지 않습니다.
+
+Homebrew는 이미 설치된 바이너리에 이 검사 코드를 소급해서 넣을 수 없습니다. 검사
+기능이 배포되기 전 버전은 사용자가 한 번 직접 갱신해야 하며, 이후 정책 변경부터
+최소 버전 enforcement가 적용됩니다.
+
 <a id="native-windows"></a>
 
 ### 네이티브 Windows
@@ -340,7 +372,7 @@ AI가 제시한 계획과 권한 요청을 확인한 뒤 진행하세요. 직접
 ```powershell
 $installer = Join-Path $env:TEMP "install-wikibrain.ps1"
 Invoke-WebRequest `
-  "https://raw.githubusercontent.com/hungrytech/wikibrain/v0.1.6/scripts/install-windows.ps1" `
+  "https://raw.githubusercontent.com/hungrytech/wikibrain/v0.1.7/scripts/install-windows.ps1" `
   -OutFile $installer
 Get-Content $installer
 powershell.exe -NoProfile -ExecutionPolicy Bypass `

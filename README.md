@@ -326,6 +326,39 @@ do not commit a personal corpus or result.
 Use the [Getting Started](#getting-started) commands above. Prebuilt bottles
 cover Apple Silicon macOS, Intel macOS, and x86_64 Linux.
 
+### Minimum supported version
+
+WikiBrain clients that include the version-policy check fetch
+[`release-policy.json`](release-policy.json) over HTTPS at most once every 24
+hours. If the installed version is below `minimum_supported_version`, capture,
+recall, writes, reindexing, resume, and non-dry-run initialization stop with an
+exact Homebrew upgrade command:
+
+```bash
+brew update && brew upgrade hungrytech/tap/wikibrain
+brainctl setup && brainctl doctor
+```
+
+Native Windows users receive the version-pinned installer URL instead and should
+download and review it as described below. A direct `pipx` installation can be
+upgraded with:
+
+```powershell
+pipx install --force "git+https://github.com/hungrytech/wikibrain.git@v0.1.7"
+brainctl setup
+brainctl doctor
+```
+
+`--version`, `status`, `doctor`, `setup`, `pause`, `forget`, `retention`, and
+hook/skill inspection or uninstall remain available, so an unsupported release
+cannot lock users out of diagnosis, privacy controls, or owned data. Network,
+schema, and malformed-policy failures are fail-open and negatively cached for
+24 hours; the check sends no workspace, prompt, or memory content.
+
+Homebrew cannot retrofit this check into a binary that is already installed.
+Releases from before the check was shipped must be upgraded manually once;
+minimum-version enforcement applies to subsequent policy changes.
+
 <a id="native-windows"></a>
 
 ### Native Windows
@@ -351,7 +384,7 @@ manually, open PowerShell, download the versioned installer, review it, then run
 ```powershell
 $installer = Join-Path $env:TEMP "install-wikibrain.ps1"
 Invoke-WebRequest `
-  "https://raw.githubusercontent.com/hungrytech/wikibrain/v0.1.6/scripts/install-windows.ps1" `
+  "https://raw.githubusercontent.com/hungrytech/wikibrain/v0.1.7/scripts/install-windows.ps1" `
   -OutFile $installer
 Get-Content $installer
 powershell.exe -NoProfile -ExecutionPolicy Bypass `

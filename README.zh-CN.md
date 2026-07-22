@@ -295,6 +295,35 @@ uv run --locked python -m benchmarks.retrieval_quality \
 请使用上方[快速开始](#getting-started)中的命令。预构建的二进制包覆盖
 Apple Silicon macOS、Intel macOS 和 x86_64 Linux。
 
+### 最低支持版本
+
+包含版本策略检查的 WikiBrain 客户端最多每 24 小时通过 HTTPS 获取一次
+[`release-policy.json`](release-policy.json)。如果已安装版本低于
+`minimum_supported_version`，捕获、检索、写入、重新索引、resume 和非演练初始化
+都会停止，并显示准确的 Homebrew 升级命令：
+
+```bash
+brew update && brew upgrade hungrytech/tap/wikibrain
+brainctl setup && brainctl doctor
+```
+
+原生 Windows 会改为显示下文所述的版本固定安装程序 URL；请先下载并审查内容再执行。
+如果是直接通过 `pipx` 安装，请这样升级：
+
+```powershell
+pipx install --force "git+https://github.com/hungrytech/wikibrain.git@v0.1.7"
+brainctl setup
+brainctl doctor
+```
+
+`--version`、`status`、`doctor`、`setup`、`pause`、`forget`、`retention`，
+以及钩子/技能的检查和卸载仍然可用。因此，停止支持的版本不会阻止诊断、隐私控制或
+访问用户拥有的数据。网络、schema 或策略格式错误采用 fail-open，并对失败结果进行
+24 小时 negative cache。该检查不会发送 workspace、prompt 或 memory 内容。
+
+Homebrew 无法将此检查追溯添加到已经安装的二进制文件中。检查功能发布前的版本必须由
+用户手动升级一次；之后的策略变更才会执行最低版本限制。
+
 <a id="native-windows"></a>
 
 ### 原生 Windows
@@ -317,7 +346,7 @@ Do not bypass Codex hook trust.
 ```powershell
 $installer = Join-Path $env:TEMP "install-wikibrain.ps1"
 Invoke-WebRequest `
-  "https://raw.githubusercontent.com/hungrytech/wikibrain/v0.1.6/scripts/install-windows.ps1" `
+  "https://raw.githubusercontent.com/hungrytech/wikibrain/v0.1.7/scripts/install-windows.ps1" `
   -OutFile $installer
 Get-Content $installer
 powershell.exe -NoProfile -ExecutionPolicy Bypass `

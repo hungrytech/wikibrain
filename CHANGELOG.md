@@ -6,6 +6,27 @@ The project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-07-22
+
+### Added
+
+- A remotely managed `minimum_supported_version` policy for clients that include
+  the version check, with strict schema and SemVer validation, a private 24-hour
+  cache with bounded reads and an exact internal schema, exact-URL HTTPS retrieval
+  from the official repository, duplicate-key/parser-depth/timestamp-overflow
+  rejection, and platform-specific Homebrew or native-Windows/pipx remediation
+  when operational commands are blocked.
+- Regression coverage for supported, unsupported, offline, malformed, stale/future
+  cache, redirect, strict-schema, dry-run, and safety-command behavior.
+
+### Security
+
+- Version-policy network and parsing failures, including truncated HTTP response
+  bodies, fail open and are negatively cached to preserve local-first offline
+  operation without repeated hook latency. Version, diagnosis, setup, pause, forget, retention, and owned hook/skill removal remain
+  available even when the installed release is below the minimum; no workspace,
+  prompt, or memory content is sent by the policy check.
+
 ## [0.1.6] - 2026-07-22
 
 ### Fixed

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
-import multiprocessing
 import os
 import re
 import stat
+import subprocess
+import sys
 import time
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
@@ -164,75 +165,92 @@ def _download_remote_policy() -> bytes:
     return payload
 
 
-def _policy_fetch_process(
-    connection: object,
-    worker: Callable[[], bytes],
-) -> None:
-    try:
-        payload = worker()
-        connection.send_bytes(b"\x01" + payload)  # type: ignore[attr-defined]
-    except BaseException as exc:
-        error = f"{type(exc).__name__}: {exc}".encode("utf-8", errors="replace")
-        try:
-            connection.send_bytes(b"\x00" + error[:4096])  # type: ignore[attr-defined]
-        except (BrokenPipeError, EOFError, OSError):
-            pass
-    finally:
-        connection.close()  # type: ignore[attr-defined]
-
-
-def _stop_fetch_process(process: multiprocessing.Process) -> None:
-    if process.is_alive():
-        process.terminate()
-        process.join(0.2)
-    if process.is_alive() and hasattr(process, "kill"):
-        process.kill()
-        process.join(0.2)
-    if process.is_alive():
-        raise RuntimeError("release policy worker could not be stopped")
-
-
-def _fetch_remote_policy(
-    *,
-    worker: Callable[[], bytes] = _download_remote_policy,
-) -> bytes:
-    context = multiprocessing.get_context("spawn")
-    receiver, sender = context.Pipe(duplex=False)
-    process = context.Process(
-        target=_policy_fetch_process,
-        args=(sender, worker),
-        name="wikibrain-release-policy-fetch",
-        daemon=True,
+def _default_fetch_child_code() -> str:
+    source_root = str(Path(__file__).resolve().parent.parent)
+    return (
+        "import sys;"
+        f"sys.path.insert(0, {source_root!r});"
+        "from wikibrain.version_policy import _download_remote_policy;"
+        "sys.stdout.buffer.write(_download_remote_policy())"
     )
-    started = time.monotonic()
-    started_process = False
-    try:
-        try:
-            process.start()
-            started_process = True
-        except Exception as exc:
-            raise OSError("could not start release policy worker") from exc
-        finally:
-            sender.close()
 
+
+def _process_is_running(process: subprocess.Popen[bytes]) -> bool:
+    try:
+        return process.poll() is None
+    except BaseException:
+        return True
+
+
+def _cleanup_fetch_process(process: subprocess.Popen[bytes]) -> None:
+    # Keep each cleanup operation independent. A broken close/wait method must not
+    # prevent later kill, reap, and descriptor-close attempts.
+    for method_name in ("kill", "terminate", "kill"):
+        if not _process_is_running(process):
+            break
+        try:
+            getattr(process, method_name)()
+        except BaseException:
+            pass
+        try:
+            process.wait(timeout=0.1)
+        except BaseException:
+            pass
+
+    try:
+        process.communicate(timeout=0.2)
+    except BaseException:
+        pass
+    try:
+        process.wait(timeout=0.2)
+    except BaseException:
+        pass
+    for stream_name in ("stdout", "stderr", "stdin"):
+        try:
+            stream = getattr(process, stream_name)
+        except BaseException:
+            continue
+        if stream is not None:
+            try:
+                stream.close()
+            except BaseException:
+                pass
+
+
+def _fetch_remote_policy(*, child_code: str | None = None) -> bytes:
+    started = time.monotonic()
+    creation_flags = 0
+    if os.name == "nt":
+        creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        process = subprocess.Popen(
+            [sys.executable, "-I", "-c", child_code or _default_fetch_child_code()],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            creationflags=creation_flags,
+        )
+    except Exception as exc:
+        raise OSError("could not start release policy worker") from exc
+
+    try:
         remaining = TOTAL_FETCH_DEADLINE - (time.monotonic() - started)
-        if remaining <= 0 or not receiver.poll(remaining):
+        if remaining <= 0:
             raise TimeoutError("release policy request exceeded its total deadline")
         try:
-            message = receiver.recv_bytes(MAX_POLICY_BYTES + 4097)
-        except (EOFError, OSError) as exc:
-            raise OSError("release policy worker exited without a result") from exc
-        if not message or message[0] != 1:
-            detail = message[1:].decode("utf-8", errors="replace") if message else ""
-            raise OSError(f"release policy request failed: {detail}")
-        return message[1:]
+            stdout, _ = process.communicate(timeout=remaining)
+        except subprocess.TimeoutExpired as exc:
+            raise TimeoutError(
+                "release policy request exceeded its total deadline"
+            ) from exc
+        if process.returncode != 0:
+            raise OSError("release policy worker exited without a result")
+        if len(stdout) > MAX_POLICY_BYTES:
+            raise ValueError("release policy response is too large")
+        return stdout
     finally:
-        receiver.close()
-        if started_process:
-            remaining = TOTAL_FETCH_DEADLINE - (time.monotonic() - started)
-            process.join(max(0.0, remaining))
-            _stop_fetch_process(process)
-        process.close()
+        _cleanup_fetch_process(process)
 
 
 def _decision(
@@ -272,11 +290,48 @@ def _windows_cache_path_is_private(path: Path, user_home: Path) -> bool:
     return not path.is_symlink() and path.is_file()
 
 
-def _open_trusted_cache(path: Path) -> BinaryIO:
+def _fd_has_extended_acl(descriptor: int) -> bool:
+    if sys.platform == "darwin":
+        import ctypes
+        import errno
+
+        libc = ctypes.CDLL(None, use_errno=True)
+        acl_get_fd_np = libc.acl_get_fd_np
+        acl_get_fd_np.argtypes = [ctypes.c_int, ctypes.c_int]
+        acl_get_fd_np.restype = ctypes.c_void_p
+        acl_free = libc.acl_free
+        acl_free.argtypes = [ctypes.c_void_p]
+        acl_free.restype = ctypes.c_int
+        ctypes.set_errno(0)
+        acl = acl_get_fd_np(descriptor, 0x00000100)  # ACL_TYPE_EXTENDED
+        if not acl:
+            error = ctypes.get_errno()
+            if error == errno.ENOENT:
+                return False
+            raise OSError(error, os.strerror(error))
+        if acl_free(acl) != 0:
+            error = ctypes.get_errno()
+            raise OSError(error, os.strerror(error))
+        return True
+
+    list_xattrs = getattr(os, "listxattr", None)
+    if list_xattrs is None:
+        return False
+    acl_markers = {
+        "system.posix_acl_access",
+        "system.nfs4_acl",
+        "trusted.sgi_acl_file",
+    }
+    return any(
+        str(name).lower() in acl_markers for name in list_xattrs(descriptor)
+    )
+
+
+def _open_trusted_cache(path: Path, trusted_home: Path) -> BinaryIO:
     if os.name == "nt":
         from wikibrain.windows_cache import open_trusted_windows_cache
 
-        return open_trusted_windows_cache(path, Path.home())
+        return open_trusted_windows_cache(path, trusted_home)
 
     flags = os.O_RDONLY
     flags |= getattr(os, "O_CLOEXEC", 0)
@@ -290,15 +345,17 @@ def _open_trusted_cache(path: Path) -> BinaryIO:
             raise OSError("release policy cache is not owned by the current user")
         if metadata.st_mode & 0o022:
             raise OSError("release policy cache is writable by group or others")
+        if _fd_has_extended_acl(descriptor):
+            raise OSError("release policy cache has an extended ACL")
         return os.fdopen(descriptor, "rb")
     except Exception:
         os.close(descriptor)
         raise
 
 
-def _read_cache(path: Path, now: datetime) -> _CacheEntry | None:
+def _read_cache(path: Path, trusted_home: Path, now: datetime) -> _CacheEntry | None:
     try:
-        with _open_trusted_cache(path) as cache_file:
+        with _open_trusted_cache(path, trusted_home) as cache_file:
             cache_payload = cache_file.read(MAX_CACHE_BYTES + 1)
         if len(cache_payload) > MAX_CACHE_BYTES:
             raise ValueError("release policy cache exceeds the size limit")
@@ -376,8 +433,9 @@ def check_release_policy(
     if checked_at.tzinfo is None or checked_at.utcoffset() is None:
         raise ValueError("release policy check time must be timezone-aware")
     checked_at = checked_at.astimezone(UTC)
-    cache_path = home.expanduser().resolve() / CACHE_NAME
-    cached = _read_cache(cache_path, checked_at)
+    trusted_home = home.expanduser().resolve()
+    cache_path = trusted_home / CACHE_NAME
+    cached = _read_cache(cache_path, trusted_home, checked_at)
     if cached is not None:
         age = checked_at - cached.checked_at
         if timedelta(0) <= age < CACHE_TTL:

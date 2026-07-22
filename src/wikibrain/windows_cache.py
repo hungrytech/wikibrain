@@ -315,7 +315,14 @@ def open_trusted_windows_cache(path: Path, user_home: Path) -> BinaryIO:
 
         descriptor = msvcrt.open_osfhandle(handle, os.O_RDONLY)
         transferred = True
-        return os.fdopen(descriptor, "rb")
+        try:
+            return os.fdopen(descriptor, "rb")
+        except BaseException:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+            raise
     finally:
         if token:
             kernel32.CloseHandle(token)

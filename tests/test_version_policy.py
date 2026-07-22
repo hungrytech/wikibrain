@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -66,11 +68,6 @@ class _Response:
 
     def read(self, limit: int) -> bytes:
         return self.payload[:limit]
-
-
-def _blocking_policy_worker() -> bytes:
-    while True:
-        time.sleep(1)
 
 
 class VersionPolicyTests(unittest.TestCase):
@@ -203,39 +200,101 @@ class VersionPolicyTests(unittest.TestCase):
         started = time.monotonic()
         with patch("wikibrain.version_policy.TOTAL_FETCH_DEADLINE", 0.05):
             with self.assertRaises(TimeoutError):
-                _fetch_remote_policy(worker=_blocking_policy_worker)
+                _fetch_remote_policy(child_code="import time; time.sleep(3600)")
         self.assertLess(time.monotonic() - started, 0.5)
-        self.assertFalse(
-            any(
-                child.name == "wikibrain-release-policy-fetch"
-                for child in __import__("multiprocessing").active_children()
-            )
-        )
 
     def test_remote_fetch_worker_start_failure_is_an_io_failure(self) -> None:
-        class Endpoint:
-            def close(self) -> None:
-                pass
-
-        class FakeProcess:
-            def start(self) -> None:
-                raise RuntimeError("spawn disabled")
-
-            def close(self) -> None:
-                pass
-
-        class Context:
-            def Pipe(self, *, duplex: bool) -> tuple[Endpoint, Endpoint]:
-                self.duplex = duplex
-                return Endpoint(), Endpoint()
-
-            def Process(self, **kwargs: object) -> FakeProcess:
-                self.process_kwargs = kwargs
-                return FakeProcess()
-
-        with patch("wikibrain.version_policy.multiprocessing.get_context", return_value=Context()):
+        with patch(
+            "wikibrain.version_policy.subprocess.Popen",
+            side_effect=RuntimeError("spawn disabled"),
+        ):
             with self.assertRaisesRegex(OSError, "could not start"):
                 _fetch_remote_policy()
+
+    def test_cleanup_continues_after_lifecycle_and_stream_errors(self) -> None:
+        class BrokenStream:
+            def __init__(self) -> None:
+                self.close_calls = 0
+
+            def close(self) -> None:
+                self.close_calls += 1
+                raise RuntimeError("close failed")
+
+        class FakeProcess:
+            def __init__(self) -> None:
+                self.stdout = BrokenStream()
+                self.stderr = None
+                self.stdin = None
+                self.returncode = None
+                self.running = True
+                self.kill_calls = 0
+                self.wait_calls = 0
+                self.communicate_calls = 0
+
+            def poll(self) -> int | None:
+                return None if self.running else -9
+
+            def kill(self) -> None:
+                self.kill_calls += 1
+                self.running = False
+
+            def terminate(self) -> None:
+                raise AssertionError("terminate failed")
+
+            def wait(self, timeout: float) -> int:
+                self.wait_calls += 1
+                if self.running:
+                    raise subprocess.TimeoutExpired("worker", timeout)
+                return -9
+
+            def communicate(self, timeout: float) -> tuple[bytes, None]:
+                self.communicate_calls += 1
+                if self.communicate_calls == 1:
+                    raise subprocess.TimeoutExpired("worker", timeout)
+                return b"", None
+
+        process = FakeProcess()
+        with patch("wikibrain.version_policy.subprocess.Popen", return_value=process):
+            with patch("wikibrain.version_policy.TOTAL_FETCH_DEADLINE", 0.01):
+                with self.assertRaises(TimeoutError):
+                    _fetch_remote_policy()
+
+        self.assertGreaterEqual(process.kill_calls, 1)
+        self.assertGreaterEqual(process.wait_calls, 1)
+        self.assertGreaterEqual(process.communicate_calls, 2)
+        self.assertEqual(process.stdout.close_calls, 1)
+
+    @unittest.skipIf(os.name == "nt", "POSIX child/FD inspection")
+    def test_repeated_timeouts_leave_no_child_or_file_descriptor(self) -> None:
+        def children() -> set[int]:
+            result = subprocess.run(
+                ["ps", "-axo", "pid=,ppid="],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            candidates = {
+                int(fields[0])
+                for line in result.stdout.splitlines()
+                if len(fields := line.split()) == 2 and int(fields[1]) == os.getpid()
+            }
+            alive: set[int] = set()
+            for process_id in candidates:
+                try:
+                    os.kill(process_id, 0)
+                except ProcessLookupError:
+                    continue
+                alive.add(process_id)
+            return alive
+
+        before_children = children()
+        before_fds = len(os.listdir("/dev/fd"))
+        for _ in range(10):
+            with patch("wikibrain.version_policy.TOTAL_FETCH_DEADLINE", 0.02):
+                with self.assertRaises(TimeoutError):
+                    _fetch_remote_policy(child_code="import time; time.sleep(3600)")
+        self.assertEqual(children(), before_children)
+        self.assertEqual(len(os.listdir("/dev/fd")), before_fds)
 
     def test_schema_rejects_bool_float_and_duplicate_keys(self) -> None:
         valid_fields = (
@@ -401,6 +460,19 @@ class VersionPolicyTests(unittest.TestCase):
                 self.assertEqual(decision.state, "supported")
                 self.assertEqual(decision.source, "remote")
 
+    @unittest.skipUnless(sys.platform == "darwin", "macOS extended ACL contract")
+    def test_cache_rejects_a_macos_extended_acl(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            cache = Path(temporary) / CACHE_NAME
+            cache.write_text("{}", encoding="utf-8")
+            cache.chmod(0o600)
+            subprocess.run(
+                ["chmod", "+a", "everyone allow write", str(cache)],
+                check=True,
+            )
+            with self.assertRaisesRegex(OSError, "extended ACL"):
+                _open_trusted_cache(cache, cache.parent)
+
     def test_windows_cache_policy_requires_a_regular_file_in_user_profile(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -431,7 +503,54 @@ class VersionPolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=Path.home()) as temporary:
             cache = Path(temporary) / CACHE_NAME
             cache.write_bytes(b"trusted")
-            with _open_trusted_cache(cache) as handle:
+            with _open_trusted_cache(cache, cache.parent) as handle:
+                self.assertEqual(handle.read(), b"trusted")
+
+    @unittest.skipUnless(os.name == "nt", "Windows CRT descriptor contract")
+    def test_windows_fdopen_failure_closes_the_transferred_descriptor(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temporary:
+            cache = Path(temporary) / CACHE_NAME
+            cache.write_bytes(b"trusted")
+            with patch(
+                "wikibrain.windows_cache.os.fdopen",
+                side_effect=RuntimeError("fdopen failed"),
+            ), patch(
+                "wikibrain.windows_cache.os.close", wraps=os.close
+            ) as close_descriptor:
+                with self.assertRaisesRegex(RuntimeError, "fdopen failed"):
+                    _open_trusted_cache(cache, cache.parent)
+            close_descriptor.assert_called_once()
+
+    @unittest.skipUnless(os.name == "nt", "Windows custom-home contract")
+    def test_windows_cache_accepts_a_private_configured_home_outside_profile(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            configured_home = Path(temporary)
+            try:
+                configured_home.resolve().relative_to(Path.home().resolve())
+            except ValueError:
+                pass
+            else:
+                self.skipTest("repository is inside the Windows user profile")
+            account = subprocess.run(
+                ["whoami"], check=True, capture_output=True, text=True
+            ).stdout.strip()
+            subprocess.run(
+                [
+                    "icacls",
+                    str(configured_home),
+                    "/inheritance:r",
+                    "/grant:r",
+                    f"{account}:(OI)(CI)F",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            cache = configured_home / CACHE_NAME
+            cache.write_bytes(b"trusted")
+            with _open_trusted_cache(cache, configured_home) as handle:
                 self.assertEqual(handle.read(), b"trusted")
 
     @unittest.skipIf(os.name == "nt", "POSIX ownership contract")
@@ -449,7 +568,7 @@ class VersionPolicyTests(unittest.TestCase):
                 return_value=foreign_metadata,
             ):
                 with self.assertRaisesRegex(OSError, "not owned"):
-                    _open_trusted_cache(cache)
+                    _open_trusted_cache(cache, cache.parent)
 
     def test_policy_rejects_pre_schema_epoch_and_excessive_future_timestamp(self) -> None:
         for updated_at in (

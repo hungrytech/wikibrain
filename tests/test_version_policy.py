@@ -662,15 +662,19 @@ class VersionPolicyTests(unittest.TestCase):
         self.assertEqual(rejected_old_policy.source, "remote-error")
 
     def test_unexpected_runtime_fetch_failure_fails_open(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            decision = check_release_policy(
-                Path(temporary),
-                "0.1.7",
-                now=NOW,
-                fetcher=lambda: (_ for _ in ()).throw(RuntimeError("no workers")),
-            )
-        self.assertEqual(decision.state, "unavailable")
-        self.assertEqual(decision.source, "remote-error")
+        for failure in (
+            RuntimeError("no workers"),
+            subprocess.SubprocessError("subprocess failed"),
+        ):
+            with self.subTest(failure=type(failure).__name__), tempfile.TemporaryDirectory() as temporary:
+                decision = check_release_policy(
+                    Path(temporary),
+                    "0.1.7",
+                    now=NOW,
+                    fetcher=lambda failure=failure: (_ for _ in ()).throw(failure),
+                )
+            self.assertEqual(decision.state, "unavailable")
+            self.assertEqual(decision.source, "remote-error")
 
     def test_naive_now_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

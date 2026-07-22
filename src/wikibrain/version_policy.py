@@ -461,6 +461,7 @@ def check_release_policy(
         OSError,
         RecursionError,
         RuntimeError,
+        subprocess.SubprocessError,
         UnicodeError,
         ValueError,
     ):

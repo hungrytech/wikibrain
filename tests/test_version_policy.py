@@ -23,10 +23,10 @@ from wikibrain.version_policy import (
     MAX_CACHE_BYTES,
     POLICY_URL,
     PolicyDecision,
+    _cleanup_fetch_process,
     _download_remote_policy,
     _fetch_remote_policy,
     _open_trusted_cache,
-    _windows_cache_path_is_private,
     check_release_policy,
     parse_release_policy,
 )
@@ -50,6 +50,71 @@ def _policy(
             "updated_at": updated_at,
         }
     ).encode()
+
+
+def _secure_windows_directory(path: Path) -> None:
+    account = subprocess.run(
+        ["whoami"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+    subprocess.run(
+        [
+            "icacls",
+            str(path),
+            "/inheritance:r",
+            "/grant:r",
+            f"{account}:(OI)(CI)F",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _set_windows_security(
+    path: Path, *, owner_sid: str | None = None, null_dacl: bool = False
+) -> None:
+    import ctypes
+    from ctypes import wintypes
+
+    win_dll = getattr(ctypes, "WinDLL")
+    win_error = getattr(ctypes, "WinError")
+    get_last_error = getattr(ctypes, "get_last_error")
+    advapi32 = win_dll("advapi32", use_last_error=True)
+    kernel32 = win_dll("kernel32", use_last_error=True)
+    owner = ctypes.c_void_p()
+    advapi32.ConvertStringSidToSidW.argtypes = [
+        wintypes.LPCWSTR,
+        ctypes.POINTER(ctypes.c_void_p),
+    ]
+    advapi32.ConvertStringSidToSidW.restype = wintypes.BOOL
+    advapi32.SetNamedSecurityInfoW.argtypes = [
+        wintypes.LPWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    advapi32.SetNamedSecurityInfoW.restype = wintypes.DWORD
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel32.LocalFree.restype = ctypes.c_void_p
+    security_information = 0
+    if owner_sid is not None:
+        if not advapi32.ConvertStringSidToSidW(owner_sid, ctypes.byref(owner)):
+            raise win_error(get_last_error())
+        security_information |= 0x00000001
+    if null_dacl:
+        security_information |= 0x00000004
+    try:
+        status = advapi32.SetNamedSecurityInfoW(
+            str(path), 1, security_information, owner, None, None, None
+        )
+        if status != 0:
+            raise win_error(status)
+    finally:
+        if owner:
+            kernel32.LocalFree(owner)
 
 
 class _Response:
@@ -261,8 +326,57 @@ class VersionPolicyTests(unittest.TestCase):
 
         self.assertGreaterEqual(process.kill_calls, 1)
         self.assertGreaterEqual(process.wait_calls, 1)
-        self.assertGreaterEqual(process.communicate_calls, 2)
+        self.assertEqual(process.communicate_calls, 1)
         self.assertEqual(process.stdout.close_calls, 1)
+
+    def test_cleanup_failure_is_surfaced_within_the_absolute_budget(self) -> None:
+        class UnkillableFakeProcess:
+            stdout = None
+            stderr = None
+            stdin = None
+            returncode = None
+
+            def poll(self) -> None:
+                return None
+
+            def kill(self) -> None:
+                raise OSError("kill failed")
+
+            def terminate(self) -> None:
+                raise OSError("terminate failed")
+
+            def wait(self, timeout: float) -> int:
+                raise subprocess.TimeoutExpired("worker", timeout)
+
+            def communicate(self, timeout: float) -> tuple[bytes, None]:
+                raise subprocess.TimeoutExpired("worker", timeout)
+
+        started = time.monotonic()
+        with patch(
+            "wikibrain.version_policy.subprocess.Popen",
+            return_value=UnkillableFakeProcess(),
+        ), patch("wikibrain.version_policy.TOTAL_FETCH_DEADLINE", 0.01):
+            with self.assertRaisesRegex(OSError, "cleanup could not be verified"):
+                _fetch_remote_policy()
+        self.assertLess(time.monotonic() - started, 0.2)
+
+    @unittest.skipIf(os.name == "nt", "POSIX native reap contract")
+    def test_native_reap_bypasses_broken_popen_lifecycle_methods(self) -> None:
+        process = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(3600)"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        process_id = process.pid
+        with patch.object(process, "kill", side_effect=OSError("kill failed")), patch.object(
+            process, "terminate", side_effect=OSError("terminate failed")
+        ), patch.object(process, "wait", side_effect=OSError("wait failed")):
+            self.assertTrue(
+                _cleanup_fetch_process(process, time.monotonic() + 0.5)
+            )
+        with self.assertRaises(ChildProcessError):
+            os.waitpid(process_id, os.WNOHANG)
 
     @unittest.skipIf(os.name == "nt", "POSIX child/FD inspection")
     def test_repeated_timeouts_leave_no_child_or_file_descriptor(self) -> None:
@@ -473,30 +587,66 @@ class VersionPolicyTests(unittest.TestCase):
             with self.assertRaisesRegex(OSError, "extended ACL"):
                 _open_trusted_cache(cache, cache.parent)
 
-    def test_windows_cache_policy_requires_a_regular_file_in_user_profile(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
+    @unittest.skipUnless(os.name == "nt", "Windows reparse contract")
+    def test_windows_cache_rejects_final_reparse_points_and_junction_escapes(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temporary:
             root = Path(temporary)
-            profile = root / "profile"
-            profile.mkdir()
-            private_cache = profile / ".wikibrain" / "release-policy-cache.json"
-            private_cache.parent.mkdir()
-            private_cache.write_text("{}", encoding="utf-8")
-            shared_cache = root / "shared" / "release-policy-cache.json"
-            shared_cache.parent.mkdir()
-            shared_cache.write_text("{}", encoding="utf-8")
+            trusted_home = root / "trusted"
+            outside = root / "outside"
+            trusted_home.mkdir()
+            outside.mkdir()
 
-            self.assertTrue(
-                _windows_cache_path_is_private(private_cache, profile)
+            target = trusted_home / "target.json"
+            target.write_bytes(b"target")
+            linked_cache = trusted_home / CACHE_NAME
+            linked_cache.symlink_to(target)
+            with self.assertRaisesRegex(OSError, "reparse point"):
+                _open_trusted_cache(linked_cache, trusted_home)
+            linked_cache.unlink()
+
+            outside_cache = outside / CACHE_NAME
+            outside_cache.write_bytes(b"outside")
+            junction = trusted_home / "escape"
+            subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(junction), str(outside)],
+                check=True,
+                capture_output=True,
+                text=True,
             )
-            self.assertFalse(
-                _windows_cache_path_is_private(shared_cache, profile)
+            with self.assertRaisesRegex(OSError, "outside"):
+                _open_trusted_cache(junction / CACHE_NAME, trusted_home)
+
+    @unittest.skipUnless(os.name == "nt", "Windows DACL contract")
+    def test_windows_cache_rejects_everyone_write_and_null_dacl(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temporary:
+            root = Path(temporary)
+            everyone_cache = root / "everyone.json"
+            everyone_cache.write_bytes(b"unsafe")
+            subprocess.run(
+                ["icacls", str(everyone_cache), "/grant", "*S-1-1-0:(W)"],
+                check=True,
+                capture_output=True,
+                text=True,
             )
-            if os.name != "nt":
-                symlink_cache = profile / ".wikibrain" / "linked-cache.json"
-                symlink_cache.symlink_to(shared_cache)
-                self.assertFalse(
-                    _windows_cache_path_is_private(symlink_cache, profile)
-                )
+            with self.assertRaisesRegex(OSError, "another principal"):
+                _open_trusted_cache(everyone_cache, root)
+
+            null_dacl_cache = root / "null-dacl.json"
+            null_dacl_cache.write_bytes(b"unsafe")
+            _set_windows_security(null_dacl_cache, null_dacl=True)
+            with self.assertRaisesRegex(OSError, "null DACL"):
+                _open_trusted_cache(null_dacl_cache, root)
+
+    @unittest.skipUnless(os.name == "nt", "Windows owner contract")
+    def test_windows_cache_rejects_foreign_owner(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temporary:
+            cache = Path(temporary) / CACHE_NAME
+            cache.write_bytes(b"unsafe")
+            _set_windows_security(cache, owner_sid="S-1-5-18")
+            with self.assertRaisesRegex(OSError, "not owned"):
+                _open_trusted_cache(cache, cache.parent)
 
     @unittest.skipUnless(os.name == "nt", "Windows handle and DACL contract")
     def test_windows_handle_validation_accepts_a_private_user_cache(self) -> None:
@@ -533,21 +683,7 @@ class VersionPolicyTests(unittest.TestCase):
                 pass
             else:
                 self.skipTest("repository is inside the Windows user profile")
-            account = subprocess.run(
-                ["whoami"], check=True, capture_output=True, text=True
-            ).stdout.strip()
-            subprocess.run(
-                [
-                    "icacls",
-                    str(configured_home),
-                    "/inheritance:r",
-                    "/grant:r",
-                    f"{account}:(OI)(CI)F",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
+            _secure_windows_directory(configured_home)
             cache = configured_home / CACHE_NAME
             cache.write_bytes(b"trusted")
             with _open_trusted_cache(cache, configured_home) as handle:

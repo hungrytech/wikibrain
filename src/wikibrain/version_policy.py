@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import stat
 import subprocess
 import sys
@@ -26,7 +27,10 @@ CACHE_NAME = "release-policy-cache.json"
 MAX_POLICY_BYTES = 64 * 1024
 MAX_CACHE_BYTES = 128 * 1024
 SOCKET_TIMEOUT = 2.0
+FETCH_REQUEST_DEADLINE = 2.0
+FETCH_CLEANUP_RESERVE = 0.5
 TOTAL_FETCH_DEADLINE = 2.5
+_REAL_POPEN = subprocess.Popen
 MAX_FUTURE_SKEW = timedelta(minutes=5)
 POLICY_SCHEMA_EPOCH = datetime(2026, 7, 22, tzinfo=UTC)
 _SEMVER = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
@@ -168,7 +172,9 @@ def _download_remote_policy() -> bytes:
 def _default_fetch_child_code() -> str:
     source_root = str(Path(__file__).resolve().parent.parent)
     return (
-        "import sys;"
+        "import os,sys,threading;"
+        f"_t=threading.Timer({FETCH_REQUEST_DEADLINE!r},lambda:os._exit(124));"
+        "_t.daemon=True;_t.start();"
         f"sys.path.insert(0, {source_root!r});"
         "from wikibrain.version_policy import _download_remote_policy;"
         "sys.stdout.buffer.write(_download_remote_policy())"
@@ -182,29 +188,107 @@ def _process_is_running(process: subprocess.Popen[bytes]) -> bool:
         return True
 
 
-def _cleanup_fetch_process(process: subprocess.Popen[bytes]) -> None:
-    # Keep each cleanup operation independent. A broken close/wait method must not
-    # prevent later kill, reap, and descriptor-close attempts.
+def _set_native_returncode(process: subprocess.Popen[bytes], status: int) -> None:
+    try:
+        process.returncode = os.waitstatus_to_exitcode(status)
+    except (AttributeError, ValueError):
+        process.returncode = -signal.SIGKILL
+
+
+def _native_terminate_and_reap(
+    process: subprocess.Popen[bytes], deadline: float
+) -> bool:
+    if os.name == "posix":
+        try:
+            waited_pid, status = os.waitpid(process.pid, os.WNOHANG)
+        except ChildProcessError:
+            return True
+        except OSError:
+            return False
+        if waited_pid == process.pid:
+            _set_native_returncode(process, status)
+            return True
+        try:
+            os.kill(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except OSError:
+            return False
+        while True:
+            try:
+                waited_pid, status = os.waitpid(process.pid, os.WNOHANG)
+            except ChildProcessError:
+                return True
+            except OSError:
+                return False
+            if waited_pid == process.pid:
+                _set_native_returncode(process, status)
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                # SIGKILL has been delivered to our own child. A blocking wait here
+                # is the final no-orphan guarantee, not another network allowance.
+                try:
+                    waited_pid, status = os.waitpid(process.pid, 0)
+                except ChildProcessError:
+                    return True
+                except OSError:
+                    return False
+                _set_native_returncode(process, status)
+                return waited_pid == process.pid
+            time.sleep(min(0.005, remaining))
+
+    if os.name == "nt":
+        try:
+            import _winapi
+
+            handle = process._handle  # type: ignore[attr-defined]
+            state = _winapi.WaitForSingleObject(handle, 0)
+            if state == _winapi.WAIT_TIMEOUT:
+                _winapi.TerminateProcess(handle, 1)
+                remaining_ms = max(0, int((deadline - time.monotonic()) * 1000))
+                state = _winapi.WaitForSingleObject(handle, remaining_ms)
+                if state == _winapi.WAIT_TIMEOUT:
+                    state = _winapi.WaitForSingleObject(handle, _winapi.INFINITE)
+            if state != _winapi.WAIT_OBJECT_0:
+                return False
+            process.returncode = _winapi.GetExitCodeProcess(handle)
+            return True
+        except (AttributeError, OSError):
+            return False
+
+    return False
+
+
+def _generic_terminate_and_reap(
+    process: subprocess.Popen[bytes], deadline: float
+) -> bool:
+    # This path supports test doubles and uncommon runtimes. Each operation remains
+    # independent, but every wait uses only the absolute cleanup budget.
     for method_name in ("kill", "terminate", "kill"):
         if not _process_is_running(process):
-            break
+            return True
         try:
             getattr(process, method_name)()
         except BaseException:
             pass
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
         try:
-            process.wait(timeout=0.1)
+            process.wait(timeout=remaining)
         except BaseException:
             pass
+    return not _process_is_running(process)
 
-    try:
-        process.communicate(timeout=0.2)
-    except BaseException:
-        pass
-    try:
-        process.wait(timeout=0.2)
-    except BaseException:
-        pass
+
+def _cleanup_fetch_process(
+    process: subprocess.Popen[bytes], deadline: float
+) -> bool:
+    if isinstance(process, _REAL_POPEN):
+        reaped = _native_terminate_and_reap(process, deadline)
+    else:
+        reaped = _generic_terminate_and_reap(process, deadline)
     for stream_name in ("stdout", "stderr", "stdin"):
         try:
             stream = getattr(process, stream_name)
@@ -215,10 +299,17 @@ def _cleanup_fetch_process(process: subprocess.Popen[bytes]) -> None:
                 stream.close()
             except BaseException:
                 pass
+    return reaped
 
 
 def _fetch_remote_policy(*, child_code: str | None = None) -> bytes:
     started = time.monotonic()
+    cleanup_budget = min(FETCH_CLEANUP_RESERVE, TOTAL_FETCH_DEADLINE / 5)
+    absolute_deadline = started + TOTAL_FETCH_DEADLINE
+    request_deadline = min(
+        started + FETCH_REQUEST_DEADLINE,
+        absolute_deadline - cleanup_budget,
+    )
     creation_flags = 0
     if os.name == "nt":
         creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -234,8 +325,10 @@ def _fetch_remote_policy(*, child_code: str | None = None) -> bytes:
     except Exception as exc:
         raise OSError("could not start release policy worker") from exc
 
+    result: bytes | None = None
+    failure: BaseException | None = None
     try:
-        remaining = TOTAL_FETCH_DEADLINE - (time.monotonic() - started)
+        remaining = request_deadline - time.monotonic()
         if remaining <= 0:
             raise TimeoutError("release policy request exceeded its total deadline")
         try:
@@ -248,9 +341,17 @@ def _fetch_remote_policy(*, child_code: str | None = None) -> bytes:
             raise OSError("release policy worker exited without a result")
         if len(stdout) > MAX_POLICY_BYTES:
             raise ValueError("release policy response is too large")
-        return stdout
-    finally:
-        _cleanup_fetch_process(process)
+        result = stdout
+    except BaseException as exc:
+        failure = exc
+
+    reaped = _cleanup_fetch_process(process, absolute_deadline)
+    if not reaped:
+        raise OSError("release policy worker cleanup could not be verified") from failure
+    if failure is not None:
+        raise failure.with_traceback(failure.__traceback__)
+    assert result is not None
+    return result
 
 
 def _decision(
@@ -282,14 +383,6 @@ def _unavailable(current_version: str, *, source: str) -> PolicyDecision:
     )
 
 
-def _windows_cache_path_is_private(path: Path, user_home: Path) -> bool:
-    try:
-        path.resolve(strict=True).relative_to(user_home.resolve(strict=True))
-    except (OSError, ValueError):
-        return False
-    return not path.is_symlink() and path.is_file()
-
-
 def _fd_has_extended_acl(descriptor: int) -> bool:
     if sys.platform == "darwin":
         import ctypes
@@ -316,15 +409,20 @@ def _fd_has_extended_acl(descriptor: int) -> bool:
 
     list_xattrs = getattr(os, "listxattr", None)
     if list_xattrs is None:
-        return False
+        raise OSError("descriptor ACL inspection is unavailable")
     acl_markers = {
         "system.posix_acl_access",
         "system.nfs4_acl",
+        "security.nfs4_acl",
+        "trusted.nfs4_acl",
+        "system.richacl",
         "trusted.sgi_acl_file",
     }
-    return any(
-        str(name).lower() in acl_markers for name in list_xattrs(descriptor)
+    names = (
+        name.decode("ascii", errors="ignore") if isinstance(name, bytes) else name
+        for name in list_xattrs(descriptor)
     )
+    return any(name.lower() in acl_markers for name in names)
 
 
 def _open_trusted_cache(path: Path, trusted_home: Path) -> BinaryIO:

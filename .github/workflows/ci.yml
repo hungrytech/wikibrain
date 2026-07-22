@@ -67,6 +67,19 @@ jobs:
           uv build
           twine check dist/*
 
+      - name: Install and smoke-test the wheel
+        run: |
+          python -m venv /tmp/wikibrain-wheel
+          /tmp/wikibrain-wheel/bin/python -m pip install dist/*.whl
+          /tmp/wikibrain-wheel/bin/brainctl --version
+          /tmp/wikibrain-wheel/bin/python -I -c 'from wikibrain.version_policy import _fetch_remote_policy; assert _fetch_remote_policy(child_code="import sys;sys.stdout.buffer.write(b\"{}\")") == b"{}"'
+
+      - name: Install and smoke-test the source distribution
+        run: |
+          python -m venv /tmp/wikibrain-sdist
+          /tmp/wikibrain-sdist/bin/python -m pip install dist/*.tar.gz
+          /tmp/wikibrain-sdist/bin/brainctl --version
+
   windows:
     runs-on: windows-latest
     strategy:
@@ -199,3 +212,20 @@ jobs:
         run: |
           python -m compileall -q src tests scripts
           python -m pip check
+
+  release-ready:
+    if: always()
+    needs: [test, windows, macos, release-gates]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every release gate
+        env:
+          TEST_RESULT: ${{ needs.test.result }}
+          WINDOWS_RESULT: ${{ needs.windows.result }}
+          MACOS_RESULT: ${{ needs.macos.result }}
+          RELEASE_GATES_RESULT: ${{ needs.release-gates.result }}
+        run: |
+          test "$TEST_RESULT" = success
+          test "$WINDOWS_RESULT" = success
+          test "$MACOS_RESULT" = success
+          test "$RELEASE_GATES_RESULT" = success

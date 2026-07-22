@@ -23,6 +23,7 @@ stores durable context as readable Markdown, and uses
 - [Why WikiBrain](#why-wikibrain)
 - [Getting Started](#getting-started)
 - [How it works](#how-it-works)
+- [Short-term and long-term memory](#memory-lifecycle)
 - [Verified benchmark](#verified-benchmark)
 - [Installation and trust](#installation-and-trust)
 - [Daily commands](#daily-commands)
@@ -36,14 +37,15 @@ stores durable context as readable Markdown, and uses
 | Need | What WikiBrain provides |
 | --- | --- |
 | Continue across agents | Claude and Codex can recover the same project-scoped context. |
-| Keep evidence separate from memory | Searchable conversation handoffs stay distinct from explicit long-term memories. |
+| Separate evidence from memory | 90-day evidence, adaptive memory, and explicit long-term memory remain distinguishable. |
 | Preserve user ownership | Markdown is the durable source; the Wikimap index is disposable. |
 | Recover from transient failures | Archive, promotion, and relation-cleanup outboxes retry interrupted work. |
 | Stay in control | Capture is allowlisted, pauseable, inspectable, previewable, and deletable. |
 
 WikiBrain does not crawl your repositories or automatically turn every
-conversation into permanent truth. Only lifecycle payloads are captured, and
-only explicit “remember this” requests become durable memories.
+conversation into permanent truth. Only lifecycle payloads are captured.
+Explicit “remember this” requests become user-authored long-term memory;
+repeatedly injected evidence can become separately labeled adaptive memory.
 
 <a id="getting-started"></a>
 
@@ -102,7 +104,8 @@ Codex hooks ───────┘            ├─ Markdown vault: durable r
 2. `Stop` pairs the final response with the prompt and archives the turn as an
    immutable Markdown handoff.
 3. Explicit “remember” requests create durable memory pages through an
-   independent retry queue.
+   independent retry queue. Repeatedly injected short-term evidence can create a
+   separate adaptive-memory page after it clears the usage gate.
 4. `SessionStart` restores recent and query-relevant context for the same Git
    workspace.
 5. Typed `relates-to` and `supersedes` links connect evidence and suppress stale
@@ -115,6 +118,34 @@ timeout cannot block the coding agent.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for persistence, deletion, retry, and
 trust-boundary details.
+
+<a id="memory-lifecycle"></a>
+
+## Short-term and long-term memory
+
+| Layer | What it contains | Lifetime |
+| --- | --- | --- |
+| Short-term evidence | Redacted session turns and compaction handoffs | 90 days by default |
+| Adaptive long-term memory | A bounded, redacted snapshot of evidence repeatedly delivered to agent context | Survives ordinary retention; remains labeled `adaptive` |
+| Explicit long-term memory | A fact or preference created with “remember” or `brainctl remember` | Survives ordinary retention; remains labeled `explicit` |
+
+Adaptive promotion uses a rolling 60-day window. A session or handoff becomes
+eligible only after it was actually injected on at least three distinct UTC
+days, across three distinct consumer provider/session pairs, with at least two
+provider/session/day injections. Replays from the same provider/session pair on
+the same day count once. Manual `brainctl recall` without a genuine consumer
+session identity does not count. Search
+results that do not reach the final `<memory-data>` do not count, memory pages do
+not count toward their own promotion, superseded evidence is ineligible, and
+workspace counters never mix. If a promoted source is superseded later, its
+adaptive derivative is hidden from recall too.
+
+Promotion writes at most 2,000 characters of the source-verified evidence to a
+new Markdown page with the source document ID, usage counts, promotion time,
+and `memory_kind: adaptive`. It is retained context, not a declaration that the
+content is true. The original 90-day evidence can expire while this smaller
+page remains. Explicitly forgetting the source also removes its derived
+adaptive page; normal retention does not.
 
 <a id="verified-benchmark"></a>
 
@@ -361,18 +392,19 @@ brainctl retention --apply
 - The archive is redacted plaintext, not application-level encrypted. Use
   FileVault, BitLocker, or LUKS.
 - `remember` is project-scoped by default. Use `--global` only intentionally.
-- Retention removes expired session and handoff evidence, never explicit durable
-  memories, and is preview-only without `--apply`. The cutoff uses the evidence
-  `captured_at` time, not its later registration time; stale promotion work does
-  not protect expired turns indefinitely.
+- Retention removes expired session and handoff evidence, but preserves both
+  adaptive and explicit long-term memory. It is preview-only without `--apply`.
+  The cutoff uses the evidence `captured_at` time, not its later registration
+  time; stale promotion work does not protect expired turns indefinitely.
 - Completed handoff rows are compacted into document metadata. Each forgotten
   source keeps one canonical anti-replay tombstone, and retention folds all
   tombstones from an otherwise empty session into one session tombstone. These
   fingerprints do not expire because doing so could resurrect replayed content.
   WikiBrain keeps the newest 100 forget receipts and three installer backups per
   target, and removes empty calendar directories after retention.
-- A plain document deletion removes that page. Use `--cascade` to preview the
-  source conversation impact, then repeat it with `--apply` to erase both.
+- Explicitly forgetting short-term evidence also removes its derived adaptive
+  memory. A plain memory deletion removes that page. Use `--cascade` to preview
+  the full source-session impact, then repeat it with `--apply` to erase it.
 - Override the state location with `WIKIBRAIN_HOME` or `brainctl --home PATH`.
 
 Homebrew or pipx uninstall does not delete the separate brain directory.

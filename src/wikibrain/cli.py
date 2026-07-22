@@ -610,10 +610,17 @@ def command_forget(args: argparse.Namespace, home: Path) -> int:
                 "document has no source session lineage; refusing a partial cascade"
             )
         else:
+            adaptive_rows = store.adaptive_documents_for_source(args.document)
             preview = {
                 "selector": f"document:{args.document}",
                 "cascade": False,
-                "paths": [str(row["path"])] if row else [],
+                "paths": [
+                    *([str(row["path"])] if row else []),
+                    *(str(value["path"]) for value in adaptive_rows),
+                ],
+                "derived_adaptive_memories": [
+                    str(value["document_id"]) for value in adaptive_rows
+                ],
             }
     else:
         if selected_provider is None:
@@ -731,7 +738,11 @@ def command_retention(args: argparse.Namespace, home: Path) -> int:
     paths = [str(row["path"]) for row in rows]
     _erase_owned_paths(config, paths)
     receipts = [
-        store.forget_document(str(row["document_id"]), "retention")
+        store.forget_document(
+            str(row["document_id"]),
+            "retention",
+            preserve_adaptive=True,
+        )
         for row in rows
     ]
     raw_deleted = store.prune_expired_raw_evidence(before)

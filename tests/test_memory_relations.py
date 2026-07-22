@@ -441,7 +441,7 @@ class MemoryRelationTests(unittest.TestCase):
                     WHERE type = 'table' AND name = 'supersession_tombstones'
                     """
                 ).fetchone()
-            self.assertEqual(version, "8")
+            self.assertEqual(version, "9")
             self.assertIsNotNone(table)
             self.assertIsNotNone(migrated.document(document_id))
 

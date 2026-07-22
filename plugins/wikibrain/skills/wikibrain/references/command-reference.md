@@ -45,6 +45,9 @@ brainctl forget --session session-ID --provider claude --apply
 
 Deletion removes the owned Markdown page, records a tombstone and receipt, runs
 a WAL checkpoint, and asks Wikimap to rebuild its disposable index.
+Explicitly forgetting short-term evidence also deletes its derived adaptive
+memory and includes that path in the preview and receipt. Ordinary retention
+does not perform this cascade.
 `--cascade` follows a document's displayed session lineage and erases the full
 source session, after preview, so the same fact cannot remain in conversation
 evidence. A cascade without source-session lineage is refused. Session IDs can
@@ -55,12 +58,21 @@ CLI requires it whenever a unique provider cannot be inferred safely.
 `--days` is supplied. The cutoff is each evidence item's `captured_at` (or the
 raw turn completion time), not a later Markdown registration time. It prunes
 expired unarchived SQLite evidence and stale promotion work after failed writes,
-but never explicit durable memories. Completed handoff outbox rows are compacted
+but never adaptive or explicit long-term memory. Completed handoff outbox rows are compacted
 into document metadata; forget uses one canonical anti-replay tombstone per
 source, and retention folds an otherwise empty session down to one session
 tombstone. Tombstone fingerprints do not expire because that could resurrect
 replayed content. The newest 100 forget receipts and three installer backups per
 target are kept, and empty date directories are removed after retention.
+
+Automatic adaptive promotion is driven only by evidence rendered into final
+agent context. The defaults are a rolling 60-day window, three distinct consumer
+provider/session pairs, three distinct UTC days, and two provider/session/day
+injections. Replays in the same provider/session/day count once; manual recalls
+without a genuine consumer identity do not count; memory pages, superseded
+evidence, and cross-workspace usage cannot increase the score. The promoted page
+contains at most 2,000 redacted source characters and is labeled
+`memory_kind: adaptive`.
 
 ## Trust boundaries
 

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import BrainConfig
+from .curation import Curator
 from .models import SearchHit
 from .storage import BrainStore
 from .wikimap_adapter import WikimapAdapter, WikimapError, fallback_search
@@ -212,6 +213,8 @@ class RecallService:
         query: str | None = None,
         *,
         include_recent: bool = True,
+        consumer_provider: str | None = None,
+        consumer_session_id: str | None = None,
     ) -> str:
         scope = self._scope(cwd)
         if scope is None:
@@ -361,12 +364,14 @@ class RecallService:
         suffix = "\n</memory-data>"
         budget = self.config.recall_char_limit - len(prefix) - len(suffix)
         rendered: list[str] = []
+        rendered_records: list[dict[str, Any]] = []
         used = 0
         for index, record in enumerate(records, start=1):
             block = _render_record(index=index, **record)
             separator = 1 if rendered else 0
             if used + separator + len(block) <= budget:
                 rendered.append(block)
+                rendered_records.append(record)
                 used += separator + len(block)
                 continue
 
@@ -375,21 +380,59 @@ class RecallService:
                 break
             evidence = str(record["evidence"])
             clipped = evidence[: max(0, min(len(evidence), remaining // 2))]
+            candidate_record = {**record, "evidence": clipped}
             candidate = _render_record(
                 index=index,
-                **{**record, "evidence": clipped},
+                **candidate_record,
                 truncated=True,
             )
             while len(candidate) > remaining and clipped:
                 clipped = clipped[: max(0, len(clipped) - max(8, len(clipped) // 8))]
+                candidate_record = {**record, "evidence": clipped}
                 candidate = _render_record(
                     index=index,
-                    **{**record, "evidence": clipped},
+                    **candidate_record,
                     truncated=True,
                 )
             if len(candidate) <= remaining:
                 rendered.append(candidate)
+                rendered_records.append(candidate_record)
             break
         if not rendered:
             return ""
+        if (
+            self.config.adaptive_memory_enabled
+            and consumer_provider
+            and consumer_session_id
+        ):
+            provider = consumer_provider
+            session_id = consumer_session_id
+            curator: Curator | None = None
+            for record in rendered_records:
+                if record["kind"] not in {"session", "handoff"}:
+                    continue
+                try:
+                    usage = self.store.record_document_usage(
+                        str(record["document_id"]),
+                        consumer_provider=provider,
+                        consumer_session_id=session_id,
+                        searched=bool(query),
+                        injected=True,
+                        window_days=self.config.adaptive_memory_window_days,
+                        min_sessions=self.config.adaptive_memory_min_sessions,
+                        min_days=self.config.adaptive_memory_min_days,
+                        min_injections=self.config.adaptive_memory_min_injections,
+                    )
+                    if usage["eligible"]:
+                        curator = curator or Curator(
+                            self.config, self.store, self.wikimap
+                        )
+                        curator.promote_adaptive(
+                            str(record["document_id"]),
+                            str(record["evidence"]),
+                            usage,
+                        )
+                except (OSError, RuntimeError, ValueError, sqlite3.Error):
+                    # Recall must remain available if optional adaptive retention fails.
+                    continue
         return prefix + "\n".join(rendered) + suffix

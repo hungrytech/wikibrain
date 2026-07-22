@@ -13,7 +13,8 @@ Codex hooks ───────┘       │
 ## Boundaries
 
 - SQLite owns hook receipts, sessions, turns, selected tool pointers,
-  document registrations, typed document relations, and deletion tombstones.
+  document registrations, bounded context-usage signals, adaptive-memory
+  provenance, typed document relations, and deletion tombstones.
 - Markdown owns readable durable memory, including `relates_to` and `supersedes`
   frontmatter. Conversation turns are immutable handoff pages, so later edits
   cannot silently rewrite the evidence.
@@ -68,19 +69,47 @@ Claude deletion cannot erase an unrelated Codex session with the same ID.
 
 ## Memory quality
 
-All redacted turns are searchable evidence, but they are not automatically
-treated as permanent truth. Only explicit requests such as “기억해” or
-“remember this” produce a durable memory page in V1. A durable memory may link
-to same-workspace evidence with `relates-to` or replace stale guidance with
-`supersedes`; recall follows supporting links one hop and omits superseded
-memories. If a newer memory is forgotten, a compact SQLite supersession
-tombstone keeps its stale predecessor suppressed. Forgetting a relation target
-also removes the dangling ID from surviving Markdown frontmatter. Schema v6
-queues that cleanup in a durable SQLite outbox in the same transaction as the
-deletion; YAML-aware atomic edits are acknowledged only after success, so an
-interrupted retention run retries the cleanup instead of leaving permanent
-SQLite/Markdown drift. Promotion into system instructions, `AGENTS.md`,
-`CLAUDE.md`, or skills is never automatic.
+Memory has three distinguishable layers. Redacted session and handoff pages are
+short-term evidence with a 90-day default retention period. Explicit requests
+such as “기억해” or “remember this” create `memory_kind: explicit` long-term
+pages. Repeatedly useful short-term evidence can create a separate
+`memory_kind: adaptive` long-term page; this is retained context, not an
+automatic assertion that its content is true.
+
+Schema v9 records at most one context-usage row per source, UTC day, consumer
+provider, and consumer session. Within a rolling 60-day window, raw session or
+handoff evidence becomes eligible after three distinct consumer provider/session
+pairs, three distinct UTC days, and two provider/session/day injections. Only
+records rendered into the final `<memory-data>` count. Same-provider/session/day
+replays are idempotent, and manual recalls without a consumer identity do not
+count. Explicit and adaptive memory pages do not feed their own counters, superseded
+sources are excluded, and each source's workspace remains the counting scope.
+A later source supersession is propagated to its adaptive derivative so stale
+retained evidence remains hidden. Old usage rows are pruned as new usage arrives.
+
+Promotion copies at most 2,000 redacted characters from the source-backed
+evidence into a new Markdown page and records source ID, usage counts, and
+promotion time. Adaptive filenames depend only on the source ID under
+`memories/adaptive/`, so concurrent promoters converge on one registered path
+instead of leaving title-derived plaintext orphans. SQLite keeps
+source-to-adaptive provenance without a foreign
+key to the short-term source: ordinary retention may remove that source while
+the adaptive page remains. An explicit source forget removes its derived page,
+including when the source already expired under retention. Source tombstones
+and a registration-time existence check prevent an in-flight promotion from
+recreating forgotten data. Promotion failure is fail-open for recall and is
+retried when qualifying evidence is next injected.
+
+A durable memory may link to same-workspace evidence with `relates-to` or
+replace stale guidance with `supersedes`; recall follows supporting links one
+hop and omits superseded memories. If a newer memory is forgotten, a compact
+SQLite supersession tombstone keeps its stale predecessor suppressed.
+Forgetting a relation target also removes the dangling ID from surviving
+Markdown frontmatter. Schema v6 queues that cleanup in a durable SQLite outbox
+in the same transaction as the deletion; YAML-aware atomic edits are
+acknowledged only after success, so an interrupted retention run retries the
+cleanup instead of leaving permanent SQLite/Markdown drift. Promotion into
+system instructions, `AGENTS.md`, `CLAUDE.md`, or skills is never automatic.
 
 ## Privacy
 
@@ -98,4 +127,6 @@ added.
 
 Retention covers registered session/handoff pages and unarchived SQLite turns,
 handoffs, and orphan lifecycle events. Source tombstones prevent a late replay
-from restoring pruned plaintext. Durable memory pages are excluded.
+from restoring pruned plaintext. Both adaptive and explicit long-term memory
+pages are excluded; explicit forget remains authoritative over their derived
+provenance.

@@ -15,6 +15,7 @@ from .config import BrainConfig, atomic_write_text
 from .redaction import redact_text
 from .storage import (
     BrainStore,
+    adaptive_memory_id,
     explicit_memory_id,
     handoff_document_id,
     stable_hash,
@@ -246,7 +247,11 @@ captured_at: {_yaml_string(captured)}
         turn_key: str | None = None,
         relates_to: list[str] | None = None,
         supersedes: list[str] | None = None,
+        memory_kind: str = "explicit",
+        registration_metadata: dict[str, Any] | None = None,
     ) -> tuple[str, Path]:
+        if memory_kind not in {"explicit", "adaptive"}:
+            raise ValueError("memory kind must be explicit or adaptive")
         if workspace is not None:
             scope = self.config.scope_for(workspace)
             if scope is None:
@@ -278,11 +283,18 @@ captured_at: {_yaml_string(captured)}
                 workspace,
                 relations,
             )
+        filename = (
+            f"adaptive-{stable_hash(document_id)[:24]}.md"
+            if memory_kind == "adaptive"
+            else f"{_safe_name(safe_title, 48)}-{document_id}.md"
+        )
         relative = (
-            Path("memories")
+            Path("memories") / "adaptive" / filename
+            if memory_kind == "adaptive"
+            else Path("memories")
             / now.strftime("%Y")
             / now.strftime("%m")
-            / f"{_safe_name(safe_title, 48)}-{document_id}.md"
+            / filename
         )
         relation_frontmatter = ""
         if relations.get("relates-to"):
@@ -296,6 +308,7 @@ captured_at: {_yaml_string(captured)}
         content = f"""---
 id: {_yaml_string(document_id)}
 type: "memory"
+memory_kind: {_yaml_string(memory_kind)}
 title: {_yaml_string(safe_title)}
 source: {_yaml_string(source)}
 workspace: {_yaml_string(workspace or "")}
@@ -311,6 +324,16 @@ captured_at: {_yaml_string(timestamp)}
             target_path.read_text(encoding="utf-8") if target_path.exists() else None
         )
         path = self._write(relative, content)
+
+        def restore_failed_write() -> None:
+            current = self.store.document(document_id)
+            if current is not None and Path(str(current["path"])) == path:
+                return
+            if previous_content is None:
+                path.unlink(missing_ok=True)
+            else:
+                atomic_write_text(path, previous_content)
+
         try:
             registered = self.store.register_document(
                 document_id,
@@ -322,24 +345,93 @@ captured_at: {_yaml_string(timestamp)}
                 workspace=workspace,
                 metadata={
                     "source": source,
+                    "memory_kind": memory_kind,
                     "redactions": redacted.count + title_redaction.count,
+                    **(registration_metadata or {}),
                 },
                 relations=relations,
             )
         except Exception:
-            if previous_content is None:
-                path.unlink(missing_ok=True)
-            else:
-                atomic_write_text(path, previous_content)
+            restore_failed_write()
             raise
         if not registered:
-            if previous_content is None:
-                path.unlink(missing_ok=True)
-            else:
-                atomic_write_text(path, previous_content)
+            restore_failed_write()
         if update_index:
             self.update_index()
         return document_id, path
+
+    def promote_adaptive(
+        self,
+        source_document_id: str,
+        evidence: str,
+        usage: Mapping[str, Any],
+        *,
+        source_snapshot: Mapping[str, Any] | None = None,
+    ) -> tuple[str, Path] | None:
+        document_id = adaptive_memory_id(source_document_id)
+        existing = self.store.document(document_id)
+        if existing is not None:
+            return document_id, Path(str(existing["path"]))
+        if self.store.tombstone_receipt(f"document:{document_id}"):
+            return None
+        live_source = self.store.document(source_document_id)
+        source = live_source if live_source is not None else source_snapshot
+        if source is None or str(source["kind"]) not in {"session", "handoff"}:
+            return None
+        bounded = evidence.strip()[: self.config.adaptive_memory_max_chars].strip()
+        if not bounded:
+            return None
+        title_line = next(
+            (
+                line.strip("# []-\t ")
+                for line in bounded.splitlines()
+                if line.strip("# []-\t ")
+            ),
+            "Retained context",
+        )
+        title = f"Retained context: {title_line[:100]}"
+        promoted_at = datetime.now(UTC).isoformat(timespec="milliseconds")
+        body = (
+            bounded
+            + "\n\n## Automatic retention evidence\n\n"
+            + f"- Distinct sessions: {int(usage.get('distinct_sessions', 0))}\n"
+            + f"- Distinct days: {int(usage.get('distinct_days', 0))}\n"
+            + f"- Search sessions: {int(usage.get('search_sessions', 0))}\n"
+            + f"- Context injections: {int(usage.get('context_injections', 0))}\n"
+            + f"- Source document: `{source_document_id}`\n"
+        )
+        created_id, path = self.remember(
+            body,
+            title=title,
+            workspace=str(source["workspace"] or ""),
+            source="adaptive-retrieval",
+            update_index=False,
+            document_id=document_id,
+            captured_at=promoted_at,
+            provider=str(source["provider"]) if source["provider"] else None,
+            session_id=(
+                str(source["session_id"]) if source["session_id"] else None
+            ),
+            turn_key=str(source["turn_key"]) if source["turn_key"] else None,
+            memory_kind="adaptive",
+            registration_metadata={
+                "adaptive_source_document_id": source_document_id,
+                "promoted_at": promoted_at,
+                "last_used_at": str(usage.get("last_used_at") or promoted_at),
+                "promotion_reason": {
+                    "distinct_sessions": int(usage.get("distinct_sessions", 0)),
+                    "distinct_days": int(usage.get("distinct_days", 0)),
+                    "search_sessions": int(usage.get("search_sessions", 0)),
+                    "context_injections": int(
+                        usage.get("context_injections", 0)
+                    ),
+                },
+            },
+        )
+        if self.store.document(created_id) is None:
+            path.unlink(missing_ok=True)
+            return None
+        return created_id, path
 
     def maybe_promote_explicit(
         self, turn: Mapping[str, Any] | sqlite3.Row

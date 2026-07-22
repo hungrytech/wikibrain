@@ -69,6 +69,12 @@ class BrainConfig:
     max_field_chars: int = 40_000
     recall_char_limit: int = 6_000
     recall_result_limit: int = 6
+    adaptive_memory_enabled: bool = True
+    adaptive_memory_window_days: int = 60
+    adaptive_memory_min_sessions: int = 3
+    adaptive_memory_min_days: int = 3
+    adaptive_memory_min_injections: int = 2
+    adaptive_memory_max_chars: int = 2_000
     wikimap_command: str = "wikimap"
     update_on_stop: bool = True
 

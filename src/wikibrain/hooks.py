@@ -129,14 +129,23 @@ def process_hook(
 
     if event.name == "SessionStart":
         result.captured = store.capture_generic(event)
-        result.context = recall.context(event.cwd)
+        result.context = recall.context(
+            event.cwd,
+            consumer_provider=event.provider,
+            consumer_session_id=event.session_id,
+        )
     elif event.name == "UserPromptSubmit":
         prompt = redact_text(event.prompt or "", config.max_field_chars)
         result.captured, event.turn_id = store.capture_prompt(
             event, prompt.text, prompt.count
         )
         result.duplicate = not result.captured
-        result.context = recall.context(event.cwd, prompt.text)
+        result.context = recall.context(
+            event.cwd,
+            prompt.text,
+            consumer_provider=event.provider,
+            consumer_session_id=event.session_id,
+        )
     elif event.name == "PostToolUse":
         result.captured = store.capture_generic(event)
         result.duplicate = not result.captured

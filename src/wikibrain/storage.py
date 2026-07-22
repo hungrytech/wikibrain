@@ -6,7 +6,7 @@ import os
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterator, Literal
 
@@ -14,7 +14,7 @@ from .config import PRIVATE_FILE_MODE, ensure_private_directory
 from .models import NormalizedEvent
 
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 
 class ClosingConnection(sqlite3.Connection):
@@ -85,6 +85,10 @@ def explicit_memory_id(
         turn_key,
         workspace,
     )[:24]
+
+
+def adaptive_memory_id(source_document_id: str) -> str:
+    return "adaptive-" + stable_hash("adaptive", source_document_id)[:24]
 
 
 class BrainStore:
@@ -241,6 +245,34 @@ class BrainStore:
                     metadata_json TEXT NOT NULL DEFAULT '{}'
                 );
 
+                CREATE TABLE IF NOT EXISTS document_usage (
+                    document_id TEXT NOT NULL,
+                    usage_day TEXT NOT NULL,
+                    consumer_provider TEXT NOT NULL,
+                    consumer_session_id TEXT NOT NULL,
+                    searched INTEGER NOT NULL DEFAULT 0
+                        CHECK (searched IN (0, 1)),
+                    injected INTEGER NOT NULL DEFAULT 0
+                        CHECK (injected IN (0, 1)),
+                    last_used_at TEXT NOT NULL,
+                    PRIMARY KEY (
+                        document_id, usage_day,
+                        consumer_provider, consumer_session_id
+                    ),
+                    FOREIGN KEY (document_id)
+                        REFERENCES documents(document_id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS adaptive_memories (
+                    source_document_id TEXT PRIMARY KEY,
+                    memory_document_id TEXT NOT NULL UNIQUE,
+                    workspace TEXT NOT NULL,
+                    promoted_at TEXT NOT NULL,
+                    last_used_at TEXT NOT NULL,
+                    FOREIGN KEY (memory_document_id)
+                        REFERENCES documents(document_id) ON DELETE CASCADE
+                );
+
                 CREATE TABLE IF NOT EXISTS document_relations (
                     source_document_id TEXT NOT NULL,
                     relation_type TEXT NOT NULL
@@ -319,6 +351,8 @@ class BrainStore:
                     ON turns(cwd, completed_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_documents_workspace
                     ON documents(workspace, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_document_usage_window
+                    ON document_usage(document_id, usage_day DESC);
                 CREATE INDEX IF NOT EXISTS idx_document_relations_target
                     ON document_relations(target_document_id, relation_type);
                 CREATE INDEX IF NOT EXISTS idx_events_session
@@ -534,6 +568,22 @@ class BrainStore:
                 "created_at",
                 "metadata_json",
             },
+            "document_usage": {
+                "document_id",
+                "usage_day",
+                "consumer_provider",
+                "consumer_session_id",
+                "searched",
+                "injected",
+                "last_used_at",
+            },
+            "adaptive_memories": {
+                "source_document_id",
+                "memory_document_id",
+                "workspace",
+                "promoted_at",
+                "last_used_at",
+            },
             "document_relations": {
                 "source_document_id",
                 "relation_type",
@@ -570,6 +620,12 @@ class BrainStore:
                     + ", ".join(sorted(missing))
                 )
         required_foreign_keys = {
+            "document_usage": {
+                ("document_id", "documents", "document_id", "CASCADE"),
+            },
+            "adaptive_memories": {
+                ("memory_document_id", "documents", "document_id", "CASCADE"),
+            },
             "document_relations": {
                 ("source_document_id", "documents", "document_id", "CASCADE"),
                 ("target_document_id", "documents", "document_id", "CASCADE"),
@@ -1258,9 +1314,52 @@ class BrainStore:
         relations: dict[str, list[str]] | None = None,
     ) -> bool:
         with self.transaction() as connection:
+            document_metadata = metadata or {}
+            adaptive_source_document_id = (
+                str(document_metadata.get("adaptive_source_document_id"))
+                if document_metadata.get("adaptive_source_document_id")
+                else None
+            )
+            adaptive_source = (
+                connection.execute(
+                    "SELECT kind, workspace FROM documents WHERE document_id = ?",
+                    (adaptive_source_document_id,),
+                ).fetchone()
+                if adaptive_source_document_id
+                else None
+            )
+            adaptive_source_superseded = False
+            if adaptive_source_document_id:
+                adaptive_source_superseded = (
+                    connection.execute(
+                        "SELECT 1 FROM document_relations "
+                        "WHERE target_document_id = ? "
+                        "AND relation_type = 'supersedes' "
+                        "UNION ALL SELECT 1 FROM supersession_tombstones "
+                        "WHERE target_document_id = ? LIMIT 1",
+                        (
+                            adaptive_source_document_id,
+                            adaptive_source_document_id,
+                        ),
+                    ).fetchone()
+                    is not None
+                )
+            adaptive_source_forgotten = bool(
+                adaptive_source_document_id
+                and (
+                    adaptive_source is None
+                    or str(adaptive_source["kind"]) not in {"session", "handoff"}
+                    or str(adaptive_source["workspace"] or "")
+                    != str(workspace or "")
+                    or adaptive_source_superseded
+                    or self._has_tombstone(
+                        connection, f"document:{adaptive_source_document_id}"
+                    )
+                )
+            )
             source_event_key = (
-                str((metadata or {}).get("source_event_key"))
-                if (metadata or {}).get("source_event_key")
+                str(document_metadata.get("source_event_key"))
+                if document_metadata.get("source_event_key")
                 else None
             )
             source_forgotten = bool(
@@ -1299,7 +1398,12 @@ class BrainStore:
             document_forgotten = self._has_tombstone(
                 connection, f"document:{document_id}"
             )
-            if session_forgotten or document_forgotten or source_forgotten:
+            if (
+                session_forgotten
+                or document_forgotten
+                or source_forgotten
+                or adaptive_source_forgotten
+            ):
                 if session_forgotten and session_id and provider:
                     connection.execute(
                         """
@@ -1376,7 +1480,7 @@ class BrainStore:
                     turn_key,
                     workspace,
                     utc_now(),
-                    json.dumps(metadata or {}, ensure_ascii=False),
+                    json.dumps(document_metadata, ensure_ascii=False),
                 ),
             )
             if relations is not None:
@@ -1406,6 +1510,34 @@ class BrainStore:
                                 utc_now(),
                             ),
                         )
+                        if relation_type == "supersedes":
+                            self._supersede_adaptive_derivative(
+                                connection, document_id, target_document_id
+                            )
+            if adaptive_source_document_id:
+                promoted_at = str(document_metadata.get("promoted_at") or utc_now())
+                last_used_at = str(
+                    document_metadata.get("last_used_at") or promoted_at
+                )
+                connection.execute(
+                    """
+                    INSERT INTO adaptive_memories(
+                        source_document_id, memory_document_id, workspace,
+                        promoted_at, last_used_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(source_document_id) DO UPDATE SET
+                        memory_document_id = excluded.memory_document_id,
+                        workspace = excluded.workspace,
+                        last_used_at = excluded.last_used_at
+                    """,
+                    (
+                        adaptive_source_document_id,
+                        document_id,
+                        str(workspace or ""),
+                        promoted_at,
+                        last_used_at,
+                    ),
+                )
             self._mark_dirty(connection)
             if kind == "session" and provider and session_id and turn_key:
                 connection.execute(
@@ -1481,6 +1613,26 @@ class BrainStore:
                 relations,
             )
 
+    def _supersede_adaptive_derivative(
+        self,
+        connection: sqlite3.Connection,
+        superseder_document_id: str,
+        source_document_id: str,
+    ) -> None:
+        row = connection.execute(
+            "SELECT memory_document_id FROM adaptive_memories "
+            "WHERE source_document_id = ?",
+            (source_document_id,),
+        ).fetchone()
+        if row is None:
+            return
+        connection.execute(
+            "INSERT OR IGNORE INTO document_relations("
+            "source_document_id, relation_type, target_document_id, created_at) "
+            "VALUES (?, 'supersedes', ?, ?)",
+            (superseder_document_id, str(row["memory_document_id"]), utc_now()),
+        )
+
     def document_relations(self, document_id: str) -> list[sqlite3.Row]:
         with self.connect() as connection:
             return list(
@@ -1551,6 +1703,145 @@ class BrainStore:
             return connection.execute(
                 "SELECT * FROM documents WHERE document_id = ?", (document_id,)
             ).fetchone()
+
+    def adaptive_documents_for_source(
+        self, source_document_id: str
+    ) -> list[sqlite3.Row]:
+        with self.connect() as connection:
+            return list(
+                connection.execute(
+                    """
+                    SELECT document.*
+                    FROM adaptive_memories AS adaptive
+                    JOIN documents AS document
+                      ON document.document_id = adaptive.memory_document_id
+                    WHERE adaptive.source_document_id = ?
+                    """,
+                    (source_document_id,),
+                ).fetchall()
+            )
+
+    def record_document_usage(
+        self,
+        document_id: str,
+        *,
+        consumer_provider: str,
+        consumer_session_id: str,
+        searched: bool,
+        injected: bool,
+        used_at: str | None = None,
+        window_days: int = 60,
+        min_sessions: int = 3,
+        min_days: int = 3,
+        min_injections: int = 2,
+    ) -> dict[str, Any]:
+        if min(window_days, min_sessions, min_days, min_injections) < 1:
+            raise ValueError("adaptive memory thresholds must be positive")
+        moment = datetime.fromisoformat((used_at or utc_now()).replace("Z", "+00:00"))
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=UTC)
+        normalized_used_at = moment.astimezone(UTC).isoformat()
+        usage_day = moment.astimezone(UTC).date().isoformat()
+        cutoff_at = (
+            moment.astimezone(UTC) - timedelta(days=window_days)
+        ).isoformat()
+        with self.transaction() as connection:
+            connection.execute(
+                "DELETE FROM document_usage WHERE last_used_at < ?",
+                (cutoff_at,),
+            )
+            source = connection.execute(
+                "SELECT kind FROM documents WHERE document_id = ?",
+                (document_id,),
+            ).fetchone()
+            if source is None or str(source["kind"]) not in {"session", "handoff"}:
+                return {
+                    "eligible": False,
+                    "distinct_sessions": 0,
+                    "distinct_days": 0,
+                    "search_sessions": 0,
+                    "context_injections": 0,
+                    "last_used_at": normalized_used_at,
+                }
+            connection.execute(
+                """
+                INSERT INTO document_usage(
+                    document_id, usage_day, consumer_provider,
+                    consumer_session_id, searched, injected, last_used_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(
+                    document_id, usage_day,
+                    consumer_provider, consumer_session_id
+                ) DO UPDATE SET
+                    searched = MAX(document_usage.searched, excluded.searched),
+                    injected = MAX(document_usage.injected, excluded.injected),
+                    last_used_at = MAX(document_usage.last_used_at, excluded.last_used_at)
+                """,
+                (
+                    document_id,
+                    usage_day,
+                    consumer_provider,
+                    consumer_session_id,
+                    int(searched),
+                    int(injected),
+                    normalized_used_at,
+                ),
+            )
+            row = connection.execute(
+                """
+                SELECT
+                    COUNT(DISTINCT consumer_provider || char(31) ||
+                        consumer_session_id) AS distinct_sessions,
+                    COUNT(DISTINCT usage_day) AS distinct_days,
+                    COUNT(DISTINCT CASE WHEN searched = 1 THEN
+                        consumer_provider || char(31) || consumer_session_id
+                    END) AS search_sessions,
+                    SUM(CASE WHEN injected = 1 THEN 1 ELSE 0 END)
+                        AS context_injections,
+                    MAX(last_used_at) AS last_used_at
+                FROM document_usage
+                WHERE document_id = ? AND last_used_at >= ?
+                """,
+                (document_id, cutoff_at),
+            ).fetchone()
+            stats = {
+                "distinct_sessions": int(row["distinct_sessions"] or 0),
+                "distinct_days": int(row["distinct_days"] or 0),
+                "search_sessions": int(row["search_sessions"] or 0),
+                "context_injections": int(row["context_injections"] or 0),
+                "last_used_at": str(row["last_used_at"] or normalized_used_at),
+            }
+            promoted = connection.execute(
+                "SELECT 1 FROM adaptive_memories WHERE source_document_id = ?",
+                (document_id,),
+            ).fetchone()
+            superseded = connection.execute(
+                """
+                SELECT 1 FROM document_relations
+                WHERE target_document_id = ? AND relation_type = 'supersedes'
+                UNION ALL
+                SELECT 1 FROM supersession_tombstones
+                WHERE target_document_id = ?
+                LIMIT 1
+                """,
+                (document_id, document_id),
+            ).fetchone()
+            stats["eligible"] = bool(
+                promoted is None
+                and superseded is None
+                and stats["distinct_sessions"] >= min_sessions
+                and stats["distinct_days"] >= min_days
+                and stats["context_injections"] >= min_injections
+            )
+            if promoted is not None:
+                connection.execute(
+                    """
+                    UPDATE adaptive_memories SET last_used_at = ?
+                    WHERE source_document_id = ?
+                    """,
+                    (stats["last_used_at"], document_id),
+                )
+            return stats
 
     def documents_for_session(
         self,
@@ -1639,14 +1930,101 @@ class BrainStore:
                 (source_path, target_document_id),
             )
 
-    def forget_document(self, document_id: str, reason: str) -> dict[str, Any]:
+    def _forget_adaptive_derivatives(
+        self,
+        connection: sqlite3.Connection,
+        source_document_id: str,
+        reason: str,
+        receipt: dict[str, Any],
+    ) -> None:
+        rows = connection.execute(
+            """
+            SELECT adaptive.memory_document_id, document.path,
+                   document.workspace
+            FROM adaptive_memories AS adaptive
+            JOIN documents AS document
+              ON document.document_id = adaptive.memory_document_id
+            WHERE adaptive.source_document_id = ?
+            """,
+            (source_document_id,),
+        ).fetchall()
+        derived_ids: list[str] = []
+        paths = receipt.setdefault("paths", [])
+        for row in rows:
+            memory_document_id = str(row["memory_document_id"])
+            incoming = connection.execute(
+                """
+                SELECT relation.source_document_id,
+                       relation.relation_type, source.path
+                FROM document_relations AS relation
+                JOIN documents AS source
+                  ON source.document_id = relation.source_document_id
+                WHERE relation.target_document_id = ?
+                """,
+                (memory_document_id,),
+            ).fetchall()
+            self._queue_relation_cleanups(connection, incoming, memory_document_id)
+            memory_path = str(row["path"])
+            if memory_path not in paths:
+                paths.append(memory_path)
+            derived_ids.append(memory_document_id)
+            derived_receipt = {
+                "selector": f"document:{memory_document_id}",
+                "found": True,
+                "paths": [memory_path],
+                "kind": "memory",
+                "workspace": str(row["workspace"] or ""),
+                "adaptive_source_document_id": source_document_id,
+                "deleted_at": utc_now(),
+            }
+            connection.execute(
+                "DELETE FROM documents WHERE document_id = ?",
+                (memory_document_id,),
+            )
+            self._insert_tombstone(
+                connection,
+                f"document:{memory_document_id}",
+                f"adaptive-source-{reason}",
+                derived_receipt,
+            )
+        connection.execute(
+            "DELETE FROM adaptive_memories WHERE source_document_id = ?",
+            (source_document_id,),
+        )
+        if derived_ids:
+            receipt["derived_adaptive_memories"] = sorted(derived_ids)
+
+    def forget_document(
+        self,
+        document_id: str,
+        reason: str,
+        *,
+        preserve_adaptive: bool = False,
+    ) -> dict[str, Any]:
         selector = f"document:{document_id}"
         with self.transaction() as connection:
             existing = connection.execute(
-                "SELECT receipt_json FROM tombstones WHERE selector = ?", (selector,)
+                "SELECT reason, receipt_json FROM tombstones WHERE selector = ?",
+                (selector,),
             ).fetchone()
             if existing:
-                return json.loads(existing["receipt_json"])
+                try:
+                    receipt = json.loads(str(existing["receipt_json"]))
+                except (TypeError, json.JSONDecodeError):
+                    receipt = {"selector": selector, "found": False, "paths": []}
+                if not preserve_adaptive:
+                    self._forget_adaptive_derivatives(
+                        connection, document_id, reason, receipt
+                    )
+                    connection.execute(
+                        """
+                        UPDATE tombstones SET reason = ?, receipt_json = ?
+                        WHERE selector = ?
+                        """,
+                        (reason, json.dumps(receipt, ensure_ascii=False), selector),
+                    )
+                    self._mark_dirty(connection)
+                return receipt
             row = connection.execute(
                 "SELECT * FROM documents WHERE document_id = ?", (document_id,)
             ).fetchone()
@@ -1691,6 +2069,10 @@ class BrainStore:
                 ],
                 "deleted_at": utc_now(),
             }
+            if not preserve_adaptive:
+                self._forget_adaptive_derivatives(
+                    connection, document_id, reason, receipt
+                )
             if row:
                 superseded_rows = connection.execute(
                     """
@@ -2056,6 +2438,8 @@ class BrainStore:
                 "handoff_outbox",
                 "promotion_outbox",
                 "documents",
+                "document_usage",
+                "adaptive_memories",
                 "document_relations",
                 "supersession_tombstones",
                 "relation_cleanup_outbox",

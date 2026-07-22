@@ -6,6 +6,20 @@ The project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Adaptive long-term memory promotion for session and handoff evidence actually
+  injected across three distinct consumer provider/session pairs, three UTC
+  days, and two provider/session/day uses within a rolling 60-day window.
+- Schema v9 bounded usage accounting and source-to-adaptive provenance, with
+  same-provider/session/day replay deduplication, workspace isolation, supersession
+  exclusion, registration-time stale-promotion blocking, and propagation of later
+  source supersession to the adaptive derivative. Source-ID-only adaptive paths
+  prevent concurrent title variants from leaving unregistered plaintext files.
+- English, Korean, Japanese, and Simplified Chinese documentation distinguishing
+  90-day short-term evidence, adaptive long-term memory, and explicit long-term
+  memory.
+
 ### Changed
 
 - Retention now uses conversation capture/completion time rather than Markdown
@@ -18,6 +32,9 @@ The project follows [Semantic Versioning](https://semver.org/).
   and then one tombstone per otherwise empty session.
 - Forget receipts, installer backups, and managed-skill backups are bounded, and
   retention removes empty calendar directories.
+- Retention preserves adaptive memory after its raw source expires, while an
+  explicit source forget also deletes the derived adaptive page and reports it
+  in dry-run output and the deletion receipt.
 
 ## [0.1.3] - 2026-07-21
 

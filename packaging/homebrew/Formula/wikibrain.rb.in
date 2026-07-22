@@ -14,16 +14,28 @@ class Wikibrain < Formula
     sha256 "29b23c360f22f414dc7336bb39178cc7bcbf6021ed2733cde173f09dba19abb3"
   end
 
+  resource "cython" do
+    url "https://files.pythonhosted.org/packages/b6/6b/80101e02ebacaf9232ecf32bf6a788d36b27d820ee02434746252569ef98/cython-3.2.8.tar.gz"
+    sha256 "f4f23a56b25221a06f91817fe8f3114ab8b48a4fac73187dbb64bc2c4a87961f"
+  end
+
+  resource "pyyaml" do
+    url "https://files.pythonhosted.org/packages/05/8e/961c0007c59b8dd7729d542c61a4d537767a59645b82a0b521206e1e25c2/pyyaml-6.0.3.tar.gz"
+    sha256 "d76623373421df22fb4cf8817020cbb7ef15c725b9d5e45f17e189bfc384190f"
+  end
+
   resource "wikimap" do
     url "https://files.pythonhosted.org/packages/e6/78/02b369cddd288f009f43706a9219695e37aa772bb9856e2090fb5eacc1f9/wikimap-1.1.0.tar.gz"
     sha256 "75d5bfa358b8b924c05c58b41744eb699c3fbf7bbab852ad60ea3dd95b07c781"
   end
 
   def install
-    # Both projects use setuptools as their PEP 517 backend. Install the
-    # pinned backend first, then disable isolated network resolution.
+    # Install pinned build/runtime dependencies before disabling isolated
+    # network resolution. PyYAML's Python 3.13 build requires Cython 3.x.
     venv = virtualenv_create(libexec, "python3.13")
     venv.pip_install resource("setuptools"), build_isolation: false
+    venv.pip_install resource("cython"), build_isolation: false
+    venv.pip_install resource("pyyaml"), build_isolation: false
     venv.pip_install_and_link resource("wikimap"), build_isolation: false
     venv.pip_install_and_link buildpath, build_isolation: false
   end

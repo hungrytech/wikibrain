@@ -38,6 +38,10 @@ class HomebrewTemplateTests(unittest.TestCase):
             self.assertIn('depends_on "python@3.13"', formula)
             self.assertIn("wikimap-1.1.0.tar.gz", formula)
             self.assertIn("setuptools-83.0.0-py3-none-any.whl", formula)
+            self.assertIn("cython-3.2.8.tar.gz", formula)
+            self.assertIn("pyyaml-6.0.3.tar.gz", formula)
+            self.assertIn('pip_install resource("cython")', formula)
+            self.assertIn('pip_install resource("pyyaml")', formula)
             self.assertIn(
                 'pip_install_and_link resource("wikimap")',
                 formula,
